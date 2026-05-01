@@ -1,0 +1,44 @@
+apiVersion: v1
+entries:
+  external-dns-porkbun-webhook:
+  - annotations:
+      artifacthub.io/category: networking
+      artifacthub.io/changes: |
+        - kind: added
+          description: Initial release - multi-arch image (amd64/arm64/arm/v7)
+        - kind: added
+          description: Helm chart with Prometheus ServiceMonitor support
+        - kind: added
+          description: Health/readiness probes with credential validation
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/links: |
+        - name: source
+          url: https://github.com/mattgmoser/external-dns-porkbun-webhook
+        - name: external-dns
+          url: https://github.com/kubernetes-sigs/external-dns
+        - name: porkbun api
+          url: https://porkbun.com/api/json/v3/documentation
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-05-01T20:06:36.961579151Z"
+    description: External-DNS webhook provider for Porkbun DNS - runs as a sidecar
+      to external-dns
+    digest: 158e032b0386e5b2761f08f41f5a5995be7e982abc56a65778bb1076a54dea91
+    home: https://github.com/mattgmoser/external-dns-porkbun-webhook
+    icon: https://raw.githubusercontent.com/kubernetes-sigs/external-dns/master/img/external-dns.png
+    keywords:
+    - external-dns
+    - porkbun
+    - dns
+    - webhook
+    maintainers:
+    - name: mattgmoser
+      url: https://github.com/mattgmoser
+    name: external-dns-porkbun-webhook
+    sources:
+    - https://github.com/mattgmoser/external-dns-porkbun-webhook
+    type: application
+    urls:
+    - https://github.com/mattgmoser/external-dns-porkbun-webhook/releases/download/external-dns-porkbun-webhook-0.1.0/external-dns-porkbun-webhook-0.1.0.tgz
+    version: 0.1.0
+generated: "2026-05-01T20:06:36.961586773Z"
