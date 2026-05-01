@@ -1,0 +1,20 @@
+{{ include "edns-porkbun.fullname" . }} v{{ .Chart.AppVersion }} installed.
+
+Webhook URL (point external-dns at this from inside the cluster):
+  http://{{ include "edns-porkbun.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.webhookPort }}
+
+Configure your external-dns Helm release with these values:
+
+    provider:
+      name: webhook
+      webhook:
+        url: http://{{ include "edns-porkbun.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.webhookPort }}
+
+Domain managed: {{ .Values.porkbun.domain }}
+Domain filter:  {{ if .Values.porkbun.domainFilter }}{{ .Values.porkbun.domainFilter }}{{ else }}[{{ .Values.porkbun.domain }}]{{ end }}
+
+Health checks:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "edns-porkbun.fullname" . }} {{ .Values.service.metricsPort }}:{{ .Values.service.metricsPort }}
+  curl http://localhost:{{ .Values.service.metricsPort }}/healthz
+  curl http://localhost:{{ .Values.service.metricsPort }}/readyz
+  curl http://localhost:{{ .Values.service.metricsPort }}/metrics

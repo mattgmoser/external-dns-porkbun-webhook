@@ -1,0 +1,24 @@
+# Build artifacts
+bin/
+*.test
+*.out
+coverage.html
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# Helm packaging output
+charts/*.tgz
+.cr-release-packages/
+.cr-index/
+
+# Local env / secrets
+.env
+.env.*
+*.tfvars
+!*.tfvars.example

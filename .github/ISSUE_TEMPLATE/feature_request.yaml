@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest a new capability or enhancement
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: What are you trying to do? Be specific — "X would be nice" beats "support X".
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: What would the API/config/behavior look like?
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What did you try, why doesn't it work?
+    validations:
+      required: false

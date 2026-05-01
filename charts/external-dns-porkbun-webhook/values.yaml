@@ -1,0 +1,114 @@
+## Default values for external-dns-porkbun-webhook.
+## This chart deploys ONLY the webhook (sidecar). The expectation is that you
+## install the upstream external-dns chart with provider.name=webhook and point
+## it at the Service this chart creates.
+##
+## See README for the full one-shot pattern.
+
+image:
+  repository: ghcr.io/mattgmoser/external-dns-porkbun-webhook
+  tag: ""  # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+# Domain managed by Porkbun
+porkbun:
+  # Apex zone, e.g. "example.com"
+  domain: ""
+  # Domain filter (defaults to [domain] if empty)
+  domainFilter: []
+
+  # API credentials. Source one of:
+  #   - existingSecret + key names (preferred, GitOps-friendly)
+  #   - inline (NOT for production)
+  existingSecret:
+    name: ""
+    apiKeyKey: PORKBUN_API_KEY
+    secretApiKeyKey: PORKBUN_SECRET_API_KEY
+  apiKey: ""
+  secretApiKey: ""
+
+# Behavior
+dryRun: false
+cacheTTL: "1m"
+
+# Logging
+logLevel: info       # debug, info, warn, error
+logFormat: text      # text or json
+
+# Listen ports (rarely changed)
+webhookListen: ":8888"
+opsListen: ":8080"
+
+# Replicas — Porkbun has API rate limits; 1 is usually correct.
+replicaCount: 1
+
+# Service for external-dns (the upstream chart's webhookProvider config will
+# point at this Service's ClusterIP+port).
+service:
+  type: ClusterIP
+  webhookPort: 8888
+  metricsPort: 8080
+  annotations: {}
+
+# Pod-level
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: true
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 96Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Probes
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: ops
+  initialDelaySeconds: 5
+  periodSeconds: 30
+  timeoutSeconds: 5
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: ops
+  initialDelaySeconds: 5
+  periodSeconds: 15
+  timeoutSeconds: 5
+
+# ServiceMonitor for Prometheus Operator (kube-prometheus-stack)
+serviceMonitor:
+  enabled: false
+  namespace: ""
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+
+# RBAC: this chart needs none (it talks to Porkbun, not the k8s API).
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Extra env vars (rarely needed)
+extraEnv: []
+# - name: HTTP_PROXY
+#   value: http://proxy:8080

@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "edns-porkbun.fullname" . }}
+  labels: {{- include "edns-porkbun.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector: {{- include "edns-porkbun.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: webhook
+      port: {{ .Values.service.webhookPort }}
+      targetPort: webhook
+      protocol: TCP
+    - name: metrics
+      port: {{ .Values.service.metricsPort }}
+      targetPort: ops
+      protocol: TCP

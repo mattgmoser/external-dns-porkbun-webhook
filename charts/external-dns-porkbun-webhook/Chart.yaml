@@ -1,0 +1,18 @@
+apiVersion: v2
+name: external-dns-porkbun-webhook
+description: External-DNS webhook provider for Porkbun DNS — runs as a sidecar to external-dns
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - external-dns
+  - porkbun
+  - dns
+  - webhook
+home: https://github.com/mattgmoser/external-dns-porkbun-webhook
+sources:
+  - https://github.com/mattgmoser/external-dns-porkbun-webhook
+maintainers:
+  - name: mattgmoser
+    url: https://github.com/mattgmoser
+icon: https://raw.githubusercontent.com/kubernetes-sigs/external-dns/master/img/external-dns.png

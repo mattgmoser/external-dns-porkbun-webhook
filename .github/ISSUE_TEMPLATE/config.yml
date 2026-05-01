@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/mattgmoser/external-dns-porkbun-webhook/security/advisories/new
+    about: Report security issues privately, not via public issues.
+  - name: External-DNS upstream
+    url: https://github.com/kubernetes-sigs/external-dns/issues
+    about: Bugs in external-dns itself (not the Porkbun webhook).
+  - name: Porkbun API
+    url: https://porkbun.com/account/api
+    about: Issues with the Porkbun API itself or your account credentials.

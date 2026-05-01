@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: vet
+        run: go vet ./...
+      - name: gofmt check
+        run: |
+          out=$(gofmt -l . | grep -v '^vendor/' || true)
+          if [ -n "$out" ]; then
+            echo "::error::Files need gofmt:"
+            echo "$out"
+            exit 1
+          fi
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+      - name: test
+        run: go test -race -coverprofile=coverage.out ./...
+      - name: coverage
+        run: go tool cover -func=coverage.out | tail -5
+      - name: helm lint
+        run: |
+          curl -sL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz | tar xz
+          ./linux-amd64/helm lint charts/external-dns-porkbun-webhook

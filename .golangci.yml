@@ -1,0 +1,25 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - gocritic
+    - gosec
+    - revive
+
+issues:
+  exclude-rules:
+    # Tests can use unkeyed struct literals
+    - path: _test\.go
+      linters:
+        - gocritic
+        - gosec

@@ -1,0 +1,75 @@
+name: Bug report
+description: Something isn't working as documented
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please include enough context for us to reproduce.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you observe vs. what you expected?
+      placeholder: |
+        I created Ingress X with host foo.example.com. I expected an A record
+        at Porkbun. Nothing appeared.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Helm values, manifests, env, exact commands.
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        From the webhook container AND external-dns container if relevant.
+        `kubectl logs -n external-dns deploy/external-dns-porkbun-webhook`
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Webhook version
+      placeholder: "v0.1.0 or commit sha"
+    validations:
+      required: true
+
+  - type: input
+    id: external-dns-version
+    attributes:
+      label: External-DNS version
+      placeholder: "v0.21.0"
+    validations:
+      required: true
+
+  - type: input
+    id: k8s-version
+    attributes:
+      label: Kubernetes version
+      placeholder: "1.32.x"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: arch
+    attributes:
+      label: Cluster architecture
+      multiple: true
+      options:
+        - amd64
+        - arm64
+        - arm/v7
+    validations:
+      required: true

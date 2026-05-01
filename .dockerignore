@@ -1,0 +1,10 @@
+.git
+.github
+charts
+docs
+*.md
+LICENSE
+.golangci.yml
+Makefile
+*.test
+*.out
