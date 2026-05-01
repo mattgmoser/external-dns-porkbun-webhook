@@ -11,17 +11,17 @@ Open an [issue](https://github.com/mattgmoser/external-dns-porkbun-webhook/issue
 - Webhook version (`docker image inspect ghcr.io/mattgmoser/external-dns-porkbun-webhook | grep -i version`) and External-DNS version
 - Kubernetes flavor + version (`kubectl version`)
 
-If you can reproduce in [DRY_RUN mode](README.md#configuration), please include those logs — they're the most useful diagnostic.
+If you can reproduce in [DRY_RUN mode](README.md#configuration), please include those logs - they're the most useful diagnostic.
 
 ## Asking for features
 
-Feature requests via the **Feature request** issue template. Be specific about the use case — "X would be useful" beats "support X" every time. PRs always welcome.
+Feature requests via the **Feature request** issue template. Be specific about the use case - "X would be useful" beats "support X" every time. PRs always welcome.
 
 ## Submitting changes
 
 1. Fork the repo and create a feature branch
 2. `make lint test` should pass
-3. Add tests for behavior changes — `provider/provider_test.go` uses an in-memory mock of the Porkbun API, so most tests don't need real credentials
+3. Add tests for behavior changes - `provider/provider_test.go` uses an in-memory mock of the Porkbun API, so most tests don't need real credentials
 4. Open a PR against `main`. The CI workflow will run `vet`, `gofmt`, `golangci-lint`, full test suite, and `helm lint`.
 
 ## Coding style
@@ -38,7 +38,7 @@ Feature requests via the **Feature request** issue template. Be specific about t
 export PORKBUN_API_KEY=pk1_...
 export PORKBUN_SECRET_API_KEY=sk1_...
 export PORKBUN_DOMAIN=example.com
-export DRY_RUN=true             # safe — won't apply changes
+export DRY_RUN=true             # safe - won't apply changes
 export LOG_LEVEL=debug
 go run ./
 ```

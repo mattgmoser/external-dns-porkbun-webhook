@@ -6,23 +6,23 @@
 
 A production-grade [External-DNS](https://kubernetes-sigs.github.io/external-dns/) **webhook provider** for [Porkbun](https://porkbun.com/) DNS.
 
-Watches your Kubernetes Ingress / Service / Gateway resources and keeps a Porkbun zone in sync — automatically. New Ingress with `host: foo.example.com` ⇒ External-DNS asks this webhook ⇒ Porkbun gets a new A record. Done.
+Watches your Kubernetes Ingress / Service / Gateway resources and keeps a Porkbun zone in sync - automatically. New Ingress with `host: foo.example.com` -> External-DNS asks this webhook -> Porkbun gets a new A record. Done.
 
 ## Why this exists
 
 Porkbun isn't built into upstream External-DNS, and the existing community webhooks have gaps (no multi-arch images, dated External-DNS versions, no Helm chart). This project aims to be the canonical, batteries-included Porkbun integration:
 
-- ✅ **Multi-arch images** — `linux/amd64`, `linux/arm64`, `linux/arm/v7` (Pi support)
-- ✅ **Helm chart** — drop-in install
-- ✅ **Prometheus metrics** + Grafana-friendly histograms
-- ✅ **Health and readiness probes** with credential validation
-- ✅ **Rate-limit safe** — respects Porkbun's 1 req/sec API limit by serializing
-- ✅ **Retry with exponential backoff + jitter** on 5xx and transient network errors
-- ✅ **Dry-run mode** for safe testing
-- ✅ **Distroless container** (~15 MB)
-- ✅ **Domain filter scoping** — narrow what the webhook can touch
-- ✅ **Comprehensive tests** with mock Porkbun API
-- ✅ **Apache 2.0** licensed
+- **Multi-arch images** - `linux/amd64`, `linux/arm64`, `linux/arm/v7` (Pi support)
+- **Helm chart** - drop-in install
+- **Prometheus metrics** + Grafana-friendly histograms
+- **Health and readiness probes** with credential validation
+- **Rate-limit safe** - respects Porkbun's 1 req/sec API limit by serializing
+- **Retry with exponential backoff + jitter** on 5xx and transient network errors
+- **Dry-run mode** for safe testing
+- **Distroless container** (~15 MB)
+- **Domain filter scoping** - narrow what the webhook can touch
+- **Comprehensive tests** with mock Porkbun API
+- **Apache 2.0** licensed
 
 ## Quickstart (Helm)
 
@@ -61,9 +61,9 @@ Environment variables consumed by the binary:
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `PORKBUN_API_KEY` | yes | — | Porkbun API key (`pk1_...`) |
-| `PORKBUN_SECRET_API_KEY` | yes | — | Porkbun secret API key (`sk1_...`) |
-| `PORKBUN_DOMAIN` | yes | — | Apex zone, e.g. `example.com` |
+| `PORKBUN_API_KEY` | yes | - | Porkbun API key (`pk1_...`) |
+| `PORKBUN_SECRET_API_KEY` | yes | - | Porkbun secret API key (`sk1_...`) |
+| `PORKBUN_DOMAIN` | yes | - | Apex zone, e.g. `example.com` |
 | `DOMAIN_FILTER` | no | `[PORKBUN_DOMAIN]` | Comma-separated list of subdomain filters |
 | `WEBHOOK_LISTEN` | no | `:8888` | External-DNS webhook server bind |
 | `OPS_LISTEN` | no | `:8080` | Health/readiness/metrics bind |
@@ -94,16 +94,16 @@ External-DNS reconciles cluster-state into desired DNS records. For Porkbun (not
 
 The webhook side serves the [external-dns webhook protocol v1](https://github.com/kubernetes-sigs/external-dns/blob/master/docs/proposal/webhook-provider.md):
 
-- `GET /` — domain filter negotiation
-- `GET /records` — return current managed records
-- `POST /records` — apply changes (create/update/delete)
-- `POST /adjustendpoints` — pre-store canonicalisation (e.g. enforces 600s TTL minimum)
+- `GET /` - domain filter negotiation
+- `GET /records` - return current managed records
+- `POST /records` - apply changes (create/update/delete)
+- `POST /adjustendpoints` - pre-store canonicalisation (e.g. enforces 600s TTL minimum)
 
 The ops side (separate port) serves:
 
-- `GET /healthz` — liveness (just "ok")
-- `GET /readyz` — readiness — green only when Porkbun credentials validate
-- `GET /metrics` — Prometheus exposition
+- `GET /healthz` - liveness (just "ok")
+- `GET /readyz` - readiness - green only when Porkbun credentials validate
+- `GET /metrics` - Prometheus exposition
 
 ## Metrics
 
@@ -144,7 +144,7 @@ go run ./
 
 ## Status
 
-Actively maintained. Issues, feature requests, and PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Security disclosures go to [SECURITY.md](SECURITY.md).
+Actively maintained. Issues, feature requests, and PRs welcome - see [CONTRIBUTING.md](CONTRIBUTING.md). Security disclosures go to [SECURITY.md](SECURITY.md).
 
 ## License
 

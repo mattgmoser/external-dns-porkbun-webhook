@@ -26,6 +26,6 @@ You'll get acknowledgement within 72 hours and a target resolution within 14 day
 
 ## What's out of scope
 
-- Vulnerabilities in upstream External-DNS — report those at https://github.com/kubernetes-sigs/external-dns/security
-- Vulnerabilities in Porkbun's API itself — report those to porkbun
+- Vulnerabilities in upstream External-DNS - report those at https://github.com/kubernetes-sigs/external-dns/security
+- Vulnerabilities in Porkbun's API itself - report those to porkbun
 - Issues that require a malicious operator with `cluster-admin` permission already
