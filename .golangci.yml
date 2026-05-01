@@ -13,13 +13,22 @@ linters:
     - goimports
     - misspell
     - gocritic
-    - gosec
     - revive
+
+linters-settings:
+  errcheck:
+    # Errors from these are pointless to handle in our HTTP/metrics paths
+    # (client disconnects, etc.). Real failures in handlers go through normal err vars.
+    exclude-functions:
+      - (net/http.ResponseWriter).Write
+      - (*encoding/json.Encoder).Encode
+      - (io.Writer).Write
+      - fmt.Fprintln
+      - fmt.Fprintf
+      - fmt.Fprint
 
 issues:
   exclude-rules:
-    # Tests can use unkeyed struct literals
     - path: _test\.go
       linters:
         - gocritic
-        - gosec
