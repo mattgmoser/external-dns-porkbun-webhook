@@ -60,7 +60,6 @@ type Server struct {
 	opsServer *http.Server
 	ready     atomic.Bool
 	wg        sync.WaitGroup
-	mux       *http.ServeMux
 	metrics   *Metrics
 }
 

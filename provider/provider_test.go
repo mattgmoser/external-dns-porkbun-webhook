@@ -253,10 +253,10 @@ func TestApplyChangesUpdateTargets(t *testing.T) {
 	fake.seed(porkbun.Record{Name: "foo.example.com", Type: "A", Content: "1.1.1.1", TTL: "600"})
 	prov := newTestProvider(t, fake)
 	old := &endpoint.Endpoint{DNSName: "foo.example.com", RecordType: "A", Targets: []string{"1.1.1.1"}, RecordTTL: 600}
-	new := &endpoint.Endpoint{DNSName: "foo.example.com", RecordType: "A", Targets: []string{"2.2.2.2"}, RecordTTL: 600}
+	newEP := &endpoint.Endpoint{DNSName: "foo.example.com", RecordType: "A", Targets: []string{"2.2.2.2"}, RecordTTL: 600}
 	err := prov.ApplyChanges(context.Background(), &plan.Changes{
 		UpdateOld: []*endpoint.Endpoint{old},
-		UpdateNew: []*endpoint.Endpoint{new},
+		UpdateNew: []*endpoint.Endpoint{newEP},
 	})
 	if err != nil {
 		t.Fatal(err)

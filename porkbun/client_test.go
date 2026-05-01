@@ -24,7 +24,7 @@ func newTestServer(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.S
 }
 
 func TestPing(t *testing.T) {
-	c, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	c, _ := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		if r.URL.Path != "/ping" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
@@ -53,7 +53,7 @@ func TestPingError(t *testing.T) {
 }
 
 func TestRetrieve(t *testing.T) {
-	c, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	c, _ := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		json.NewEncoder(w).Encode(retrieveResponse{
 			baseResponse: baseResponse{Status: "SUCCESS"},
 			Records: []Record{
@@ -76,7 +76,7 @@ func TestRetrieve(t *testing.T) {
 
 func TestCreate(t *testing.T) {
 	var captured RecordInput
-	c, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	c, _ := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		var body recordRequest
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		captured = body.RecordInput
@@ -99,7 +99,7 @@ func TestCreate(t *testing.T) {
 
 func TestRetryOn500(t *testing.T) {
 	var calls atomic.Int32
-	c, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	c, _ := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		n := calls.Add(1)
 		if n < 3 {
 			http.Error(w, "boom", http.StatusInternalServerError)
@@ -117,7 +117,7 @@ func TestRetryOn500(t *testing.T) {
 
 func TestRetryGivesUp(t *testing.T) {
 	var calls atomic.Int32
-	c, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	c, _ := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
 		http.Error(w, "boom", http.StatusInternalServerError)
 	})
@@ -163,7 +163,7 @@ func TestNon4xxClientError(t *testing.T) {
 
 // ensure response body is closed even on weird input
 func TestBodyClose(t *testing.T) {
-	c, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	c, _ := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.ReadAll(r.Body)
 		json.NewEncoder(w).Encode(baseResponse{Status: "SUCCESS"})
 	})
