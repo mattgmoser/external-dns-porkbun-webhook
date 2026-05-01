@@ -16,7 +16,7 @@ func newTestServer(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.S
 	srv := httptest.NewServer(handler)
 	c := New("k", "s",
 		WithBaseURL(srv.URL),
-		WithMinGap(0),       // disable rate limiting in tests
+		WithMinGap(0), // disable rate limiting in tests
 		WithMaxRetries(2),
 	)
 	t.Cleanup(srv.Close)

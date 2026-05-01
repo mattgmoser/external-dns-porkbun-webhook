@@ -39,13 +39,13 @@ type Client struct {
 	httpClient   *http.Client
 
 	// Rate limiting: Porkbun enforces ~1 req/sec per key. Serialize calls.
-	rateMu    sync.Mutex
-	lastCall  time.Time
-	minGap    time.Duration
+	rateMu   sync.Mutex
+	lastCall time.Time
+	minGap   time.Duration
 
 	// Retries
-	maxRetries  int
-	maxBackoff  time.Duration
+	maxRetries int
+	maxBackoff time.Duration
 }
 
 // Option configures the client.
@@ -141,10 +141,10 @@ func (c *Client) Retrieve(ctx context.Context, domain string) ([]Record, error) 
 
 // RecordInput is the body of a create/edit-record call.
 type RecordInput struct {
-	Name    string `json:"name,omitempty"`    // subdomain (without root); empty = root
-	Type    string `json:"type"`              // A, AAAA, CNAME, TXT, MX, etc.
+	Name    string `json:"name,omitempty"` // subdomain (without root); empty = root
+	Type    string `json:"type"`           // A, AAAA, CNAME, TXT, MX, etc.
 	Content string `json:"content"`
-	TTL     string `json:"ttl,omitempty"`     // seconds; default 600 minimum
+	TTL     string `json:"ttl,omitempty"` // seconds; default 600 minimum
 	Prio    string `json:"prio,omitempty"`
 	Notes   string `json:"notes,omitempty"`
 }

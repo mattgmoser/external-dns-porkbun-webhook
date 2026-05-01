@@ -44,24 +44,24 @@ type Provider interface {
 // Config is the webhook server config.
 type Config struct {
 	Provider      Provider
-	Addr          string        // ":8888" (external-dns default)
-	OpsAddr       string        // ":8080" (healthz, readyz, metrics)
+	Addr          string // ":8888" (external-dns default)
+	OpsAddr       string // ":8080" (healthz, readyz, metrics)
 	ReadTimeout   time.Duration
 	WriteTimeout  time.Duration
 	IdleTimeout   time.Duration
-	Metrics       *Metrics      // optional; created internally if nil
+	Metrics       *Metrics // optional; created internally if nil
 	OnReadyChange func(bool)
 }
 
 // Server runs the two HTTP servers (webhook + ops). Use New to construct.
 type Server struct {
-	cfg         Config
-	apiServer   *http.Server
-	opsServer   *http.Server
-	ready       atomic.Bool
-	wg          sync.WaitGroup
-	mux         *http.ServeMux
-	metrics     *Metrics
+	cfg       Config
+	apiServer *http.Server
+	opsServer *http.Server
+	ready     atomic.Bool
+	wg        sync.WaitGroup
+	mux       *http.ServeMux
+	metrics   *Metrics
 }
 
 // New constructs a server.

@@ -46,7 +46,7 @@ type Config struct {
 	Domain       string                 // the Porkbun zone (root domain)
 	DomainFilter *endpoint.DomainFilter // optional; defaults to {Domain}
 	DryRun       bool
-	CacheTTL     time.Duration          // 0 = no caching
+	CacheTTL     time.Duration // 0 = no caching
 }
 
 // New constructs a Provider.
