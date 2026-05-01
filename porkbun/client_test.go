@@ -24,7 +24,7 @@ func newTestServer(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.S
 }
 
 func TestPing(t *testing.T) {
-	c, _ := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+	c, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/ping" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
@@ -76,7 +76,7 @@ func TestRetrieve(t *testing.T) {
 
 func TestCreate(t *testing.T) {
 	var captured RecordInput
-	c, _ := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+	c, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		var body recordRequest
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		captured = body.RecordInput
@@ -163,7 +163,7 @@ func TestNon4xxClientError(t *testing.T) {
 
 // ensure response body is closed even on weird input
 func TestBodyClose(t *testing.T) {
-	c, _ := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+	c, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.ReadAll(r.Body)
 		json.NewEncoder(w).Encode(baseResponse{Status: "SUCCESS"})
 	})
