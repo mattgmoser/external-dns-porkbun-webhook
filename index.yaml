@@ -5,6 +5,44 @@ entries:
       artifacthub.io/category: networking
       artifacthub.io/changes: |
         - kind: added
+          description: Chart README for Artifact Hub rendering
+        - kind: changed
+          description: Deployment uses RollingUpdate strategy with maxUnavailable 0
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/links: |
+        - name: source
+          url: https://github.com/mattgmoser/external-dns-porkbun-webhook
+        - name: external-dns
+          url: https://github.com/kubernetes-sigs/external-dns
+        - name: porkbun api
+          url: https://porkbun.com/api/json/v3/documentation
+    apiVersion: v2
+    appVersion: 0.2.0
+    created: "2026-05-03T13:11:01.100543091Z"
+    description: External-DNS webhook provider for Porkbun DNS - runs as a sidecar
+      to external-dns
+    digest: 33d903622451a4c04576fa2dadcae3e872a21c2e5f72d46bdeeacd37b638f55f
+    home: https://github.com/mattgmoser/external-dns-porkbun-webhook
+    icon: https://raw.githubusercontent.com/kubernetes-sigs/external-dns/master/img/external-dns.png
+    keywords:
+    - external-dns
+    - porkbun
+    - dns
+    - webhook
+    maintainers:
+    - name: mattgmoser
+      url: https://github.com/mattgmoser
+    name: external-dns-porkbun-webhook
+    sources:
+    - https://github.com/mattgmoser/external-dns-porkbun-webhook
+    type: application
+    urls:
+    - https://github.com/mattgmoser/external-dns-porkbun-webhook/releases/download/external-dns-porkbun-webhook-0.2.1/external-dns-porkbun-webhook-0.2.1.tgz
+    version: 0.2.1
+  - annotations:
+      artifacthub.io/category: networking
+      artifacthub.io/changes: |
+        - kind: added
           description: Initial release - multi-arch image (amd64/arm64/arm/v7)
         - kind: added
           description: Helm chart with Prometheus ServiceMonitor support
@@ -81,4 +119,4 @@ entries:
     urls:
     - https://github.com/mattgmoser/external-dns-porkbun-webhook/releases/download/external-dns-porkbun-webhook-0.1.0/external-dns-porkbun-webhook-0.1.0.tgz
     version: 0.1.0
-generated: "2026-05-03T12:07:05.194511609Z"
+generated: "2026-05-03T13:11:01.100558764Z"
