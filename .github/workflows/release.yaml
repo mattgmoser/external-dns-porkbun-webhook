@@ -124,10 +124,39 @@ jobs:
             charts/external-dns-porkbun-webhook
           ls -la .cr-release-packages
 
-      - name: Run chart-releaser (upload only)
-        uses: helm/chart-releaser-action@v1.7.0
-        with:
-          charts_dir: charts
-          skip_packaging: true
+      # Install the chart-releaser CLI directly. We avoid the helm/chart-releaser-action
+      # wrapper because v1.7.0 has a bug (latest_tag: unbound variable) that fires
+      # after a successful upload when skip_packaging is set, making the job exit
+      # red even though the release succeeded.
+      - name: Install chart-releaser
+        run: |
+          CR_VERSION=1.7.0
+          curl -sSL "https://github.com/helm/chart-releaser/releases/download/v${CR_VERSION}/chart-releaser_${CR_VERSION}_linux_amd64.tar.gz" \
+            | tar xz -C /tmp cr
+          sudo install /tmp/cr /usr/local/bin/cr
+          cr version
+
+      - name: Upload chart to GitHub releases
         env:
           CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cr upload \
+            --owner '${{ github.repository_owner }}' \
+            --git-repo '${{ github.event.repository.name }}' \
+            --token "$CR_TOKEN" \
+            --package-path .cr-release-packages \
+            --skip-existing
+
+      - name: Update gh-pages index
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p .cr-index
+          cr index \
+            --owner '${{ github.repository_owner }}' \
+            --git-repo '${{ github.event.repository.name }}' \
+            --token "$CR_TOKEN" \
+            --package-path .cr-release-packages \
+            --index-path .cr-index/index.yaml \
+            --pages-branch gh-pages \
+            --push
