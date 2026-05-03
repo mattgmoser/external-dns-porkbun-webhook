@@ -3,6 +3,7 @@
 [![ci](https://github.com/mattgmoser/external-dns-porkbun-webhook/actions/workflows/ci.yaml/badge.svg)](https://github.com/mattgmoser/external-dns-porkbun-webhook/actions/workflows/ci.yaml)
 [![release](https://github.com/mattgmoser/external-dns-porkbun-webhook/actions/workflows/release.yaml/badge.svg)](https://github.com/mattgmoser/external-dns-porkbun-webhook/actions/workflows/release.yaml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/external-dns-porkbun-webhook)](https://artifacthub.io/packages/search?repo=external-dns-porkbun-webhook)
 
 A production-grade [External-DNS](https://kubernetes-sigs.github.io/external-dns/) **webhook provider** for [Porkbun](https://porkbun.com/) DNS.
 
