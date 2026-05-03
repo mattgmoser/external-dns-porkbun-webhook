@@ -100,9 +100,34 @@ jobs:
             echo "gh-pages branch already exists — nothing to do"
           fi
 
-      - name: Run chart-releaser
+      # Import GPG signing key from secrets, so we can produce signed chart
+      # packages (.tgz.prov files alongside the .tgz). Artifact Hub uses the
+      # presence of the .prov file to render the "Signed" badge.
+      - name: Import GPG signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          # Helm package --sign needs the legacy secring.gpg format. Modern GPG
+          # (2.x) doesn't write it by default; re-export the secret keys to
+          # produce one helm can read.
+          gpg --export-secret-keys > "$HOME/.gnupg/secring.gpg"
+
+      - name: Package chart with signature
+        run: |
+          mkdir -p .cr-release-packages
+          helm package \
+            --sign \
+            --key '46821505+mattgmoser@users.noreply.github.com' \
+            --keyring "$HOME/.gnupg/secring.gpg" \
+            --destination .cr-release-packages \
+            charts/external-dns-porkbun-webhook
+          ls -la .cr-release-packages
+
+      - name: Run chart-releaser (upload only)
         uses: helm/chart-releaser-action@v1.7.0
         with:
           charts_dir: charts
+          skip_packaging: true
         env:
           CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
