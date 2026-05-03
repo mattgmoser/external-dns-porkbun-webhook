@@ -2,7 +2,7 @@ apiVersion: v2
 name: external-dns-porkbun-webhook
 description: External-DNS webhook provider for Porkbun DNS - runs as a sidecar to external-dns
 type: application
-version: 0.2.2
+version: 0.2.3
 appVersion: "0.2.0"
 keywords:
   - external-dns
@@ -27,8 +27,8 @@ annotations:
     - name: porkbun api
       url: https://porkbun.com/api/json/v3/documentation
   artifacthub.io/changes: |
-    - kind: added
-      description: Chart packages are now GPG-signed (provenance file published alongside .tgz)
+    - kind: changed
+      description: Release pipeline calls chart-releaser CLI directly for cleaner CI exit codes
   artifacthub.io/signKey: |
     fingerprint: 1CD080E5799F3F24960E791966B9EDBB9FE0C877
     url: https://github.com/mattgmoser/external-dns-porkbun-webhook/raw/main/charts/external-dns-porkbun-webhook/keys/66B9EDBB9FE0C877.asc
