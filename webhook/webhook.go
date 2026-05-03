@@ -3,13 +3,17 @@
 //
 // The protocol (Content-Type: application/external.dns.webhook+json;version=1):
 //
-//	GET  /                  → 200, {"filters": [...]}    (negotiate + return DomainFilter)
-//	GET  /records           → 200, [Endpoint, ...]       (current state)
-//	POST /records           → 204                         (apply changes)
-//	POST /adjustendpoints   → 200, [Endpoint, ...]       (canonicalise)
-//	GET  /healthz           → 200 if alive
-//	GET  /readyz            → 200 if cred-checked + DNS reachable
-//	GET  /metrics           → Prometheus
+//	GET  /                  -> 200, DomainFilter JSON     (negotiate)
+//	GET  /records           -> 200, [Endpoint, ...]       (current state)
+//	POST /records           -> 204                         (apply changes)
+//	POST /adjustendpoints   -> 200, [Endpoint, ...]       (canonicalise)
+//	GET  /healthz           -> 200 if alive
+//	GET  /readyz            -> 200 if cred-checked + DNS reachable
+//	GET  /metrics           -> Prometheus
+//
+// The DomainFilter response shape comes from endpoint.DomainFilter's own
+// MarshalJSON (currently {"include":[...],"exclude":[...]}); we don't dictate
+// it here, we just emit whatever the type produces.
 package webhook
 
 import (
@@ -190,6 +194,11 @@ func (s *Server) shutdown() error {
 // ----- handlers -----
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	// "/" is a catch-all in net/http; reject anything that isn't actually root.
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -197,7 +206,9 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	df := s.cfg.Provider.GetDomainFilter()
 	w.Header().Set("Content-Type", MediaType)
 	w.Header().Set("Vary", "Content-Type")
-	json.NewEncoder(w).Encode(df)
+	if err := json.NewEncoder(w).Encode(df); err != nil {
+		log.WithError(err).Warn("encode domain filter")
+	}
 }
 
 func (s *Server) handleRecords(w http.ResponseWriter, r *http.Request) {
@@ -220,7 +231,9 @@ func (s *Server) getRecords(w http.ResponseWriter, r *http.Request) {
 	}
 	s.metrics.ObserveEndpoints(len(eps))
 	w.Header().Set("Content-Type", MediaType)
-	json.NewEncoder(w).Encode(eps)
+	if err := json.NewEncoder(w).Encode(eps); err != nil {
+		log.WithError(err).Warn("encode records")
+	}
 }
 
 func (s *Server) applyChanges(w http.ResponseWriter, r *http.Request) {
@@ -263,7 +276,9 @@ func (s *Server) handleAdjust(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", MediaType)
-	json.NewEncoder(w).Encode(out)
+	if err := json.NewEncoder(w).Encode(out); err != nil {
+		log.WithError(err).Warn("encode adjustendpoints")
+	}
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
