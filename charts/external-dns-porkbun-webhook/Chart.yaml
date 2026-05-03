@@ -2,8 +2,8 @@ apiVersion: v2
 name: external-dns-porkbun-webhook
 description: External-DNS webhook provider for Porkbun DNS - runs as a sidecar to external-dns
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0
+appVersion: "0.2.0"
 keywords:
   - external-dns
   - porkbun
