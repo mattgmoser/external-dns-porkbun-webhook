@@ -3,7 +3,7 @@ module github.com/mattgmoser/external-dns-porkbun-webhook
 go 1.24.2
 
 require (
-	github.com/sirupsen/logrus v1.9.3
+	github.com/sirupsen/logrus v1.9.4
 	sigs.k8s.io/external-dns v0.18.0
 )
 
