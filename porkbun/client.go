@@ -236,16 +236,18 @@ func (c *Client) do(ctx context.Context, path string, body any, out any) error {
 }
 
 // waitRate blocks until at least minGap has passed since the previous call.
+// If ctx is cancelled while waiting we return without updating lastCall, so
+// the next caller's pacing isn't shifted by an aborted wait.
 func (c *Client) waitRate(ctx context.Context) {
 	c.rateMu.Lock()
 	defer c.rateMu.Unlock()
-	now := time.Now()
 	if !c.lastCall.IsZero() {
-		elapsed := now.Sub(c.lastCall)
+		elapsed := time.Since(c.lastCall)
 		if elapsed < c.minGap {
 			wait := c.minGap - elapsed
 			select {
 			case <-ctx.Done():
+				return
 			case <-time.After(wait):
 			}
 		}
