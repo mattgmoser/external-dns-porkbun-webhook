@@ -19,9 +19,9 @@ Porkbun isn't built into upstream External-DNS, and the existing community webho
 - **Rate-limit safe** - respects Porkbun's 1 req/sec API limit by serializing
 - **Retry with exponential backoff + jitter** on 5xx and transient network errors
 - **Dry-run mode** for safe testing
-- **Distroless container** (~15 MB)
+- **Distroless container** (small, runs as nonroot)
 - **Domain filter scoping** - narrow what the webhook can touch
-- **Comprehensive tests** with mock Porkbun API
+- **Tested** with a mock Porkbun API (unit tests for the client and webhook handlers)
 - **Apache 2.0** licensed
 
 ## Quickstart (Helm)
