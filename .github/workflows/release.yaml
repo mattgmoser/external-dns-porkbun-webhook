@@ -77,6 +77,29 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v4
 
+      # First-release bootstrap: chart-releaser pushes packaged charts to a
+      # gh-pages branch. On a freshly cloned/forked repo that branch doesn't
+      # exist yet, and chart-releaser fails with `fatal: invalid reference:
+      # origin/gh-pages`. Create an empty orphan gh-pages branch if missing.
+      - name: Ensure gh-pages branch exists
+        run: |
+          if ! git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            echo "gh-pages branch missing — bootstrapping for first release"
+            tmp=$(mktemp -d)
+            git worktree add -B gh-pages "$tmp" --no-checkout
+            (
+              cd "$tmp"
+              git rm -rf . >/dev/null 2>&1 || true
+              touch .nojekyll
+              git add .nojekyll
+              git commit -m "Initialize gh-pages branch"
+              git push origin gh-pages
+            )
+            git worktree remove --force "$tmp"
+          else
+            echo "gh-pages branch already exists — nothing to do"
+          fi
+
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.7.0
         with:
