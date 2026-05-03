@@ -75,7 +75,7 @@ jobs:
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
 
       - name: Install Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
 
       # First-release bootstrap: chart-releaser pushes packaged charts to a
       # gh-pages branch. On a freshly cloned/forked repo that branch doesn't
