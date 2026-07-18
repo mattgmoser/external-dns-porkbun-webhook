@@ -7,7 +7,7 @@ provider:
   webhook:
     image:
       repository: ghcr.io/mattgmoser/external-dns-porkbun-webhook
-      tag: "0.3.0"
+      tag: "0.4.0"
       pullPolicy: IfNotPresent
     env:
       - name: PORKBUN_API_KEY
@@ -85,7 +85,7 @@ domainFilters:
   - example.com
 policy: upsert-only
 registry: txt
-txtOwnerId: example-cluster
+txtOwnerId: change-me
 txtPrefix: external-dns-
 interval: 1m
 logFormat: json
@@ -98,8 +98,14 @@ logFormat: json
 # v0.21 does not apply its generic batch-change-size setting to webhook
 # providers, so stage unusually large migrations and watch both containers.
 extraArgs:
+  webhook-provider-url: http://127.0.0.1:8888
   webhook-provider-read-timeout: 30s
   webhook-provider-write-timeout: 4m30s
+
+# Keep a single writable controller during upgrades. The Porkbun limiter is
+# process-local, so overlapping webhook sidecars would bypass it.
+deploymentStrategy:
+  type: Recreate
 
 podSecurityContext:
   fsGroup: 65532

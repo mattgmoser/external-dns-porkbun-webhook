@@ -8,6 +8,13 @@ updates:
     # alter provider behavior and should not be hidden inside a broad bundle.
     open-pull-requests-limit: 3
 
+  # Keep the wrapper aligned with supported ExternalDNS chart releases.
+  - package-ecosystem: "helm"
+    directory: "/charts/external-dns-porkbun-webhook"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 1
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

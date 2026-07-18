@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ExternalDNS Porkbun webhook Helm repository</title>
+  </head>
+  <body>
+    <main>
+      <h1>ExternalDNS Porkbun webhook Helm repository</h1>
+      <p>
+        This chart installs the official ExternalDNS controller and the Porkbun
+        provider in one Pod, with the provider API restricted to loopback.
+      </p>
+      <pre><code>helm repo add edns-porkbun https://mattgmoser.github.io/external-dns-porkbun-webhook
+helm repo update
+helm show values edns-porkbun/external-dns-porkbun-webhook &gt; external-dns-porkbun-values.yaml
+# Edit every example domain, Secret, and TXT ownership value.
+helm upgrade --install external-dns edns-porkbun/external-dns-porkbun-webhook \
+  --namespace external-dns --create-namespace \
+  --values external-dns-porkbun-values.yaml</code></pre>
+      <p>
+        Read the complete prerequisites and migration guidance in the
+        <a href="https://github.com/mattgmoser/external-dns-porkbun-webhook#quickstart-helm">project README</a>,
+        or view the package on
+        <a href="https://artifacthub.io/packages/helm/external-dns-porkbun-webhook/external-dns-porkbun-webhook">Artifact Hub</a>.
+      </p>
+    </main>
+  </body>
+</html>

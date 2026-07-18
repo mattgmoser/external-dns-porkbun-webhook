@@ -33,7 +33,7 @@ body:
       label: Logs
       description: |
         From the webhook container AND external-dns container if relevant.
-        `kubectl logs -n external-dns deploy/external-dns-porkbun-webhook`
+        `kubectl logs -n external-dns deploy/external-dns -c webhook`
       render: shell
     validations:
       required: false

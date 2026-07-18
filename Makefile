@@ -4,8 +4,8 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.Version=$(VERSION)
 GO_BUILD := CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)"
 CHART := charts/$(BINARY)
-HELM_TEST_ARGS := --set legacyStandalone.acceptRisk=true --set porkbun.domain=example.com --set porkbun.existingSecret.name=porkbun-creds
 EXTERNAL_DNS_CHART_VERSION := 1.21.1
+EXTERNAL_DNS_CHART_REPOSITORY := https://kubernetes-sigs.github.io/external-dns/
 EXTERNAL_DNS_CHART_URL := https://github.com/kubernetes-sigs/external-dns/releases/download/external-dns-helm-chart-$(EXTERNAL_DNS_CHART_VERSION)/external-dns-$(EXTERNAL_DNS_CHART_VERSION).tgz
 
 .PHONY: all
@@ -50,13 +50,18 @@ docker:
 		-t ghcr.io/mattgmoser/$(BINARY):latest \
 		--push .
 
+.PHONY: helm-dependency
+helm-dependency:
+	helm repo add external-dns $(EXTERNAL_DNS_CHART_REPOSITORY) --force-update >/dev/null
+	helm dependency build $(CHART)
+
 .PHONY: helm-lint
-helm-lint:
-	helm lint --strict $(CHART) $(HELM_TEST_ARGS)
+helm-lint: helm-dependency
+	helm lint --strict $(CHART)
 
 .PHONY: helm-template
-helm-template:
-	helm template $(BINARY) $(CHART) --namespace external-dns $(HELM_TEST_ARGS) >/dev/null
+helm-template: helm-dependency
+	helm template external-dns $(CHART) --namespace external-dns >/dev/null
 
 .PHONY: helm-template-canonical
 helm-template-canonical:
@@ -64,8 +69,12 @@ helm-template-canonical:
 		--namespace external-dns \
 		--values docs/external-dns-values.yaml >/dev/null
 
+.PHONY: helm-verify
+helm-verify: helm-dependency
+	bash scripts/verify-chart.sh $(CHART) $(EXTERNAL_DNS_CHART_URL)
+
 .PHONY: helm-check
-helm-check: helm-lint helm-template helm-template-canonical
+helm-check: helm-lint helm-template helm-template-canonical helm-verify
 
 .PHONY: clean
 clean:
