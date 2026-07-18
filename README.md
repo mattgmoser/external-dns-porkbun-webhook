@@ -3,11 +3,11 @@
 [![ci](https://github.com/mattgmoser/external-dns-porkbun-webhook/actions/workflows/ci.yaml/badge.svg)](https://github.com/mattgmoser/external-dns-porkbun-webhook/actions/workflows/ci.yaml)
 [![release](https://github.com/mattgmoser/external-dns-porkbun-webhook/actions/workflows/release.yaml/badge.svg)](https://github.com/mattgmoser/external-dns-porkbun-webhook/actions/workflows/release.yaml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/external-dns-porkbun-webhook)](https://artifacthub.io/packages/search?repo=external-dns-porkbun-webhook)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/external-dns-porkbun-webhook)](https://artifacthub.io/packages/helm/external-dns-porkbun-webhook/external-dns-porkbun-webhook)
 
 A production-grade [External-DNS](https://kubernetes-sigs.github.io/external-dns/) **webhook provider** for [Porkbun](https://porkbun.com/) DNS.
 
-Watches your Kubernetes Ingress / Service / Gateway resources and keeps a Porkbun zone in sync - automatically. New Ingress with `host: foo.example.com` -> External-DNS asks this webhook -> Porkbun gets a new A record. Done.
+Works with ExternalDNS to watch the Kubernetes sources you enable and keep a Porkbun zone in sync automatically. With the chart defaults, a new Ingress or Service hostname becomes a Porkbun DNS record after ExternalDNS asks this webhook to reconcile it.
 
 ## Why this exists
 
@@ -28,7 +28,7 @@ Porkbun isn't built into upstream External-DNS, and the existing community webho
 
 ## Quickstart (Helm)
 
-The supported installation is a sidecar in the **official ExternalDNS chart**. ExternalDNS's provider protocol has no authentication, so the provider listener is bound to `127.0.0.1:8888` and is reachable only from the ExternalDNS container in the same Pod. The separate `:8080` ops listener remains available for health checks and metrics.
+The supported chart wraps the **official ExternalDNS chart** and configures this provider as its native sidecar. ExternalDNS's provider protocol has no authentication, so the provider listener is bound to `127.0.0.1:8888` and is reachable only from the ExternalDNS container in the same Pod. The separate `:8080` ops listener remains available for health checks and metrics.
 
 Start by creating a namespace and an existing Secret. Avoid putting API keys in Helm values: Helm stores release values in the cluster and command-line values can remain in shell history.
 
@@ -42,7 +42,16 @@ kubectl -n external-dns create secret generic porkbun-creds \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-Copy [`docs/external-dns-values.yaml`](docs/external-dns-values.yaml), then change all of these before installing:
+Add the repository and export the chart's version-pinned values:
+
+```sh
+helm repo add edns-porkbun https://mattgmoser.github.io/external-dns-porkbun-webhook
+helm repo update
+helm show values edns-porkbun/external-dns-porkbun-webhook \
+  --version 0.4.0 > external-dns-porkbun-values.yaml
+```
+
+Change all of these in `external-dns-porkbun-values.yaml` before installing:
 
 - Secret name if you did not use `porkbun-creds`
 - `PORKBUN_DOMAIN`, `DOMAIN_FILTER`, and `domainFilters`
@@ -52,13 +61,11 @@ Copy [`docs/external-dns-values.yaml`](docs/external-dns-values.yaml), then chan
 Never change `txtOwnerId` or `txtPrefix` casually after ExternalDNS has created records; those fields are its ownership boundary. If this is an upgrade, preserve the values already used by the cluster.
 
 ```sh
-helm repo add external-dns https://kubernetes-sigs.github.io/external-dns/
-helm repo update
-
-helm upgrade --install external-dns external-dns/external-dns \
-  --version 1.21.1 \
+helm upgrade --install external-dns \
+  edns-porkbun/external-dns-porkbun-webhook \
+  --version 0.4.0 \
   --namespace external-dns \
-  --values external-dns-values.yaml
+  --values external-dns-porkbun-values.yaml
 ```
 
 The example starts with ExternalDNS's safer `upsert-only` policy. Review the plan and ownership TXT records before opting into `sync`, which also deletes records no longer desired by Kubernetes.
@@ -73,9 +80,11 @@ kubectl -n external-dns rollout restart deployment/external-dns
 
 ExternalDNS defaults to a 15-second total webhook deadline, while Porkbun operations are serialized and a plan can easily contain hundreds of changes. The canonical values use a five-minute total deadline (`30s` + `4m30s`); this covers roughly 200 single-record mutations at the conservative request rate, while ordinary reconciliations complete much sooner. Multi-target changes or retries can still exceed that budget. ExternalDNS v0.21 does not apply its generic `batch-change-size` setting to webhook providers, so that flag cannot safely shorten this bound. Stage unusually large migrations and watch both containers' logs rather than setting an unbounded timeout.
 
-### Legacy standalone chart
+### Chart history and migration
 
-The chart published by this repository is deprecated as of `0.3.0`. It deploys the webhook in a separate Pod and must expose the unauthenticated mutation API through a ClusterIP Service. It is retained only for existing installations and now requires the explicit acknowledgement `legacyStandalone.acceptRisk=true`. New installations should use the official ExternalDNS sidecar configuration above.
+Chart `0.3.0` and earlier deployed only the webhook in a separate Pod and exposed its unauthenticated mutation API through a ClusterIP Service. Those immutable releases remain deprecated. Chart `0.4.0` replaces that topology with the official ExternalDNS chart and the same-Pod sidecar described above, so the Artifact Hub package is active again without weakening the security boundary.
+
+The chart rejects an in-place upgrade that still carries legacy standalone values because that release expected a separately managed ExternalDNS controller. Preserve that controller's `txtOwnerId`, `txtPrefix`, domain filters, policy, and credential Secret name; remove the old standalone release; then ensure only one writable ExternalDNS controller remains when installing `0.4.0`. Existing users who already manage the official chart directly may continue using the version-pinned [`docs/external-dns-values.yaml`](docs/external-dns-values.yaml) instead.
 
 ## Configuration
 
@@ -142,7 +151,7 @@ The ops side (separate port) serves:
 | `edns_porkbun_changes_total{kind=create|update|delete}` | counter | Change volume |
 | `edns_porkbun_ready` | gauge | 1 if creds + connectivity good |
 
-The official ExternalDNS chart can add the webhook endpoint to its `ServiceMonitor`; set `serviceMonitor.enabled=true` in the canonical values when Prometheus Operator is configured to discover that namespace. The deprecated standalone chart also retains its own optional `ServiceMonitor` for existing users.
+The bundled official ExternalDNS chart can add the webhook endpoint to its `ServiceMonitor`; set `external-dns.serviceMonitor.enabled=true` when Prometheus Operator is configured to discover that namespace.
 
 ## Development
 
@@ -153,7 +162,7 @@ make build            # build local binary
 make test             # unit tests with race detector
 make test-coverage    # generate coverage.html
 make lint             # vet + gofmt + golangci-lint
-make helm-check       # render canonical + legacy Helm configurations
+make helm-check       # render the wrapper + direct upstream configurations
 make docker           # multi-arch buildx push
 ```
 

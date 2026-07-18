@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.0
+
+### Helm and security
+
+- Reactivate the Artifact Hub package with a supported chart that wraps the official ExternalDNS `1.21.1` chart and installs the Porkbun provider through its native webhook sidecar integration.
+- Keep the unauthenticated provider API on `127.0.0.1:8888` inside the shared Pod and expose only the separate operations endpoint through the Service.
+- Explicitly point ExternalDNS at `http://127.0.0.1:8888` so client resolution cannot diverge from the webhook's IPv4 loopback listener.
+- Continue projecting Kubernetes API credentials only into the ExternalDNS container, so the webhook sidecar receives no controller token.
+- Pin the Deployment strategy to `Recreate` so upgrades do not overlap independently rate-limited webhook sidecars.
+- Preserve the deprecated, immutable standalone releases through `0.3.0` as migration history; document that legacy users must preserve TXT ownership settings and avoid running two writable controllers.
+- Reject in-place Helm upgrades that still carry legacy standalone values, preventing an accidental second controller with example ownership settings.
+
+### Distribution
+
+- Point the README badge at the package's permanent Artifact Hub URL instead of a search view that hid deprecated packages.
+- Publish `artifacthub-repo.yml` beside the Helm index with the live repository ID, enabling Artifact Hub publisher verification.
+- Replace the stale GitHub Pages landing page with installation instructions for the supported same-Pod chart.
+- Declare the upstream chart dependency and both runtime images explicitly in chart metadata.
+- Add native Helm dependency updates so Dependabot can track new supported ExternalDNS chart releases.
+- Reject a release tag when the wrapper defaults, direct-integration example, or Artifact Hub image metadata do not point at that release's image.
+
 ## 0.3.0
 
 ### Security

@@ -77,7 +77,7 @@ Reads env vars, configures logging, constructs the provider + webhook, and start
 
 **Why a separate ops port?** The webhook protocol has no authentication. Keeping probes and metrics on `:8080` lets the mutating provider API bind only to `127.0.0.1:8888` while kubelet and Prometheus still reach operational endpoints.
 
-**Why the official ExternalDNS sidecar chart?** Loopback is the protocol's security boundary. A standalone Service makes the provider's create/update/delete routes reachable by other workloads and is not the recommended upstream topology. The repository's old standalone chart is deprecated and retained only for migration.
+**Why the official ExternalDNS sidecar chart?** Loopback is the protocol's security boundary. A standalone Service makes the provider's create/update/delete routes reachable by other workloads and is not the recommended upstream topology. Chart 0.4.0 wraps the official ExternalDNS chart; immutable standalone releases through 0.3.0 remain deprecated for migration history.
 
 **Why distroless static?** Smallest possible image (~15MB total), no shell, no package manager, runs as nonroot UID 65532.
 

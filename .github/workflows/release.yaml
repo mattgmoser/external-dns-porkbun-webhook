@@ -56,7 +56,7 @@ jobs:
         uses: azure/setup-helm@v5.0.1
         with:
           version: v3.21.3
-      - name: Verify canonical and legacy Helm configurations
+      - name: Verify supported Helm configurations and packaged chart
         run: make helm-check
       - name: Verify release versions
         if: startsWith(github.ref, 'refs/tags/v')
@@ -66,9 +66,18 @@ jobs:
           chart_version="$(awk '$1 == "version:" {print $2; exit}' charts/external-dns-porkbun-webhook/Chart.yaml)"
           app_version="$(awk '$1 == "appVersion:" {gsub(/\"/, "", $2); print $2; exit}' charts/external-dns-porkbun-webhook/Chart.yaml)"
           example_image_tag="$(awk '$1 == "tag:" {gsub(/\"/, "", $2); print $2; exit}' docs/external-dns-values.yaml)"
+          wrapper_image_tag="$(awk '$1 == "tag:" {gsub(/\"/, "", $2); print $2; exit}' charts/external-dns-porkbun-webhook/values.yaml)"
           test "$expected" = "$chart_version"
           test "$expected" = "$app_version"
           test "$expected" = "$example_image_tag"
+          test "$expected" = "$wrapper_image_tag"
+          grep -Fq "image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:${expected}" charts/external-dns-porkbun-webhook/Chart.yaml
+          grep -Fq 'version: 1.21.1' charts/external-dns-porkbun-webhook/Chart.lock
+          grep -Fq 'repositoryID: d669d36c-431f-4e11-826c-e11ca3dd4ec4' artifacthub-repo.yml
+          if grep -Eq '^deprecated:[[:space:]]*true' charts/external-dns-porkbun-webhook/Chart.yaml; then
+            echo 'active chart must not be marked deprecated' >&2
+            exit 1
+          fi
           grep -Eq "^## ${expected}([[:space:]]|$)" CHANGELOG.md
 
   build-image:
@@ -156,7 +165,8 @@ jobs:
         run: |
           if ! git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
             echo "gh-pages branch missing — bootstrapping for first release"
-            tmp=$(mktemp -d)
+            worktree_parent=$(mktemp -d)
+            tmp="$worktree_parent/gh-pages"
             git worktree add -B gh-pages "$tmp" --no-checkout
             (
               cd "$tmp"
@@ -187,6 +197,8 @@ jobs:
       - name: Package chart with signature
         run: |
           mkdir -p .cr-release-packages
+          helm repo add external-dns https://kubernetes-sigs.github.io/external-dns/ --force-update
+          helm dependency build charts/external-dns-porkbun-webhook
           helm package \
             --sign \
             --key '46821505+mattgmoser@users.noreply.github.com' \
@@ -194,6 +206,25 @@ jobs:
             --destination .cr-release-packages \
             charts/external-dns-porkbun-webhook
           ls -la .cr-release-packages
+
+      - name: Verify signed, self-contained chart package
+        run: |
+          package=".cr-release-packages/external-dns-porkbun-webhook-${GITHUB_REF_NAME#v}.tgz"
+          public_keyring="$RUNNER_TEMP/chart-signing-public.gpg"
+          gpg --batch --export '1CD080E5799F3F24960E791966B9EDBB9FE0C877' > "$public_keyring"
+          helm verify --keyring "$public_keyring" "$package"
+          archive_listing="$(tar tzf "$package")"
+          dependency_chart='external-dns-porkbun-webhook/charts/external-dns/Chart.yaml'
+          grep -Fqx "$dependency_chart" <<< "$archive_listing"
+          dependency_version="$(tar xOf "$package" "$dependency_chart" | awk '$1 == "version:" {print $2; exit}')"
+          dependency_app_version="$(tar xOf "$package" "$dependency_chart" | awk '$1 == "appVersion:" {print $2; exit}')"
+          test "$dependency_version" = '1.21.1'
+          test "$dependency_app_version" = '0.21.0'
+          if grep -Fq 'artifacthub-repo.yml' <<< "$archive_listing"; then
+            echo 'repository metadata must not be embedded in the chart package' >&2
+            exit 1
+          fi
+          helm template external-dns "$package" --namespace external-dns >/dev/null
 
       # Install the chart-releaser CLI directly and verify the release checksum.
       - name: Install chart-releaser
@@ -219,6 +250,25 @@ jobs:
             --token "$CR_TOKEN" \
             --package-path .cr-release-packages \
             --skip-existing
+
+      # Artifact Hub reads repository metadata and the landing page from the
+      # chart repository root, beside index.yaml (not from inside a chart).
+      # Publish these first so the subsequent semantic index change triggers a
+      # scan with the companion files already present.
+      - name: Publish Helm repository metadata
+        run: |
+          pages_parent="$(mktemp -d)"
+          pages_dir="$pages_parent/gh-pages"
+          git fetch origin gh-pages
+          git worktree add --detach "$pages_dir" origin/gh-pages
+          install -m 0644 artifacthub-repo.yml "$pages_dir/artifacthub-repo.yml"
+          install -m 0644 .github/helm-repository/index.html "$pages_dir/index.html"
+          git -C "$pages_dir" add artifacthub-repo.yml index.html
+          if ! git -C "$pages_dir" diff --cached --quiet; then
+            git -C "$pages_dir" commit -m "Publish Helm repository metadata"
+            git -C "$pages_dir" push origin HEAD:gh-pages
+          fi
+          git worktree remove --force "$pages_dir"
 
       - name: Update gh-pages index
         env:

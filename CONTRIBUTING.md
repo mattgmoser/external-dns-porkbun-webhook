@@ -22,7 +22,7 @@ Feature requests via the **Feature request** issue template. Be specific about t
 1. Fork the repo and create a feature branch
 2. `make lint test helm-check` should pass (lint uses golangci-lint v2)
 3. Add tests for behavior changes - `provider/provider_test.go` uses an in-memory mock of the Porkbun API, so most tests don't need real credentials
-4. Open a PR against `main`. CI runs `vet`, `gofmt`, golangci-lint v2, the race-enabled test suite, and renders both the canonical upstream sidecar values and deprecated legacy chart.
+4. Open a PR against `main`. CI runs `vet`, `gofmt`, golangci-lint v2, the race-enabled test suite, and renders both the supported wrapper chart and the direct upstream sidecar values.
 
 ## Coding style
 
@@ -56,7 +56,7 @@ curl -H "Content-Type: application/external.dns.webhook+json;version=1" http://l
 Maintainers tag a SemVer release (`vX.Y.Z`) on `main`. The `release.yaml` workflow:
 1. Re-runs tests and Helm verification as a publication gate
 2. Builds + pushes a multi-arch image to `ghcr.io/mattgmoser/external-dns-porkbun-webhook`
-3. Releases the deprecated migration chart from `charts/external-dns-porkbun-webhook` to GitHub Pages
+3. Releases the signed same-Pod wrapper chart from `charts/external-dns-porkbun-webhook` to GitHub Pages
 
 Bump the chart's `version` and `appVersion`, the image tag in `docs/external-dns-values.yaml`, and the changelog together. The workflow rejects a `vX.Y.Z` tag that does not match both chart versions.
 

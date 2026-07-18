@@ -44,5 +44,10 @@ jobs:
         uses: azure/setup-helm@v5.0.1
         with:
           version: v3.21.3
-      - name: Verify canonical and legacy Helm configurations
+      - name: Verify supported Helm configurations and packaged chart
         run: make helm-check
+      - name: Check documentation links
+        uses: lycheeverse/lychee-action@v2.9.0
+        with:
+          args: --no-progress './**/*.md' './.github/helm-repository/*.html'
+          fail: true
