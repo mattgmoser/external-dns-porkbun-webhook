@@ -80,11 +80,22 @@ kubectl -n external-dns rollout restart deployment/external-dns
 
 ExternalDNS defaults to a 15-second total webhook deadline, while Porkbun operations are serialized and a plan can easily contain hundreds of changes. The canonical values use a five-minute total deadline (`30s` + `4m30s`); this covers roughly 200 single-record mutations at the conservative request rate, while ordinary reconciliations complete much sooner. Multi-target changes or retries can still exceed that budget. ExternalDNS v0.21 does not apply its generic `batch-change-size` setting to webhook providers, so that flag cannot safely shorten this bound. Stage unusually large migrations and watch both containers' logs rather than setting an unbounded timeout.
 
+### TXT representation
+
+Porkbun stores TXT content as one unquoted string. The webhook removes one matching outer pair of double quotes when ExternalDNS supplies it, which covers common SPF, DKIM, and verification records while preserving ordinary boundary whitespace. DNS multi-string segment boundaries are not preserved as distinct segments, and values that depend on escaped embedded quotes may be normalized during a read/write round trip. Verify those uncommon records after reconciliation instead of relying on byte-for-byte presentation identity.
+
 ### Chart history and migration
 
-Chart `0.3.0` and earlier deployed only the webhook in a separate Pod and exposed its unauthenticated mutation API through a ClusterIP Service. Those immutable releases remain deprecated. Chart `0.4.0` replaces that topology with the official ExternalDNS chart and the same-Pod sidecar described above, so the Artifact Hub package is active again without weakening the security boundary.
+Chart `0.3.0` and earlier deployed only the webhook in a separate Pod and exposed its unauthenticated mutation API through a ClusterIP Service. Those immutable releases remain available for history and are unsupported; `0.3.0` is explicitly marked deprecated. Chart `0.4.0` replaces that topology with the official ExternalDNS chart and the same-Pod sidecar described above, so the latest Artifact Hub package is active again without weakening the security boundary.
 
-The chart rejects an in-place upgrade that still carries legacy standalone values because that release expected a separately managed ExternalDNS controller. Preserve that controller's `txtOwnerId`, `txtPrefix`, domain filters, policy, and credential Secret name; remove the old standalone release; then ensure only one writable ExternalDNS controller remains when installing `0.4.0`. Existing users who already manage the official chart directly may continue using the version-pinned [`docs/external-dns-values.yaml`](docs/external-dns-values.yaml) instead.
+Do not use the generic install command above to migrate an existing standalone-chart release. First preserve the separately managed controller's `txtOwnerId`, `txtPrefix`, domain filters, and policy. If the old chart created credentials from inline `porkbun.apiKey` values, create an independently managed Secret before uninstalling or upgrading it—preferably with a rotated Porkbun key—because either operation removes that chart-owned Secret from the release. If it used `porkbun.existingSecret`, verify that Secret still exists and is not owned by the legacy Helm release.
+
+Choose one controller path:
+
+- If ExternalDNS is already managed directly with the official chart, keep that release. Add this project's version-pinned [`docs/external-dns-values.yaml`](docs/external-dns-values.yaml) sidecar settings to it, roll out the same-Pod configuration, and then remove the old standalone webhook release.
+- To adopt this wrapper, stop and remove the separately managed ExternalDNS controller and the old standalone webhook release, then install `0.4.0` with the preserved ownership settings and independent credential Secret. Never overlap two writable controllers for the same names.
+
+As a final guard, `0.4.0` rejects every in-place Helm upgrade unless `migration.acknowledgeControllerReplacement=true` is explicitly set. That acknowledgement only confirms that you completed the controller handoff; it does not perform the migration.
 
 ## Configuration
 

@@ -9,8 +9,10 @@
 - Explicitly point ExternalDNS at `http://127.0.0.1:8888` so client resolution cannot diverge from the webhook's IPv4 loopback listener.
 - Continue projecting Kubernetes API credentials only into the ExternalDNS container, so the webhook sidecar receives no controller token.
 - Pin the Deployment strategy to `Recreate` so upgrades do not overlap independently rate-limited webhook sidecars.
-- Preserve the deprecated, immutable standalone releases through `0.3.0` as migration history; document that legacy users must preserve TXT ownership settings and avoid running two writable controllers.
-- Reject in-place Helm upgrades that still carry legacy standalone values, preventing an accidental second controller with example ownership settings.
+- Preserve immutable standalone releases through `0.3.0` as unsupported migration history (`0.3.0` remains explicitly deprecated); document that legacy users must preserve TXT ownership settings and avoid running two writable controllers.
+- Require an explicit controller-replacement acknowledgement for every in-place upgrade into `0.4.0`, including upgrades with fresh values that discard the legacy keys.
+- Reject placeholder domains and TXT owner IDs at render time, before an unsafe or nonfunctional workload reaches the cluster.
+- Warn inline-credential users to create an independent Secret before uninstalling or upgrading a legacy release that owns its credential Secret.
 
 ### Distribution
 
@@ -20,6 +22,7 @@
 - Declare the upstream chart dependency and both runtime images explicitly in chart metadata.
 - Add native Helm dependency updates so Dependabot can track new supported ExternalDNS chart releases.
 - Reject a release tag when the wrapper defaults, direct-integration example, or Artifact Hub image metadata do not point at that release's image.
+- Document TXT multi-string segmentation and escaped-quote normalization instead of leaving those representation limits implicit.
 
 ## 0.3.0
 

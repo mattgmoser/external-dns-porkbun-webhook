@@ -57,17 +57,26 @@ helm-dependency:
 
 .PHONY: helm-lint
 helm-lint: helm-dependency
-	helm lint --strict $(CHART)
+	values=$$(mktemp); \
+		trap 'rm -f "$$values"' EXIT; \
+		bash scripts/chart-test-values.sh $(CHART)/values.yaml > "$$values"; \
+		helm lint --strict $(CHART) --values "$$values"
 
 .PHONY: helm-template
 helm-template: helm-dependency
-	helm template external-dns $(CHART) --namespace external-dns >/dev/null
+	values=$$(mktemp); \
+		trap 'rm -f "$$values"' EXIT; \
+		bash scripts/chart-test-values.sh $(CHART)/values.yaml > "$$values"; \
+		helm template external-dns $(CHART) --namespace external-dns --values "$$values" >/dev/null
 
 .PHONY: helm-template-canonical
 helm-template-canonical:
+	values=$$(mktemp); \
+		trap 'rm -f "$$values"' EXIT; \
+		bash scripts/chart-test-values.sh docs/external-dns-values.yaml > "$$values"; \
 	helm template external-dns $(EXTERNAL_DNS_CHART_URL) \
 		--namespace external-dns \
-		--values docs/external-dns-values.yaml >/dev/null
+		--values "$$values" >/dev/null
 
 .PHONY: helm-verify
 helm-verify: helm-dependency

@@ -5,8 +5,9 @@ a same-Pod webhook sidecar. The provider protocol has no authentication, so its
 mutation API binds only to `127.0.0.1:8888`. The Service exposes the separate
 `:8080` health and metrics endpoint, not the provider API.
 
-Chart `0.4.0` replaces the deprecated standalone topology from `0.3.0` and
-earlier. It depends on ExternalDNS chart `1.21.1` (ExternalDNS `0.21.0`).
+Chart `0.4.0` replaces the unsupported standalone topology from earlier
+releases; `0.3.0` is explicitly marked deprecated. It depends on ExternalDNS
+chart `1.21.1` (ExternalDNS `0.21.0`).
 
 ## Prerequisites
 
@@ -57,28 +58,51 @@ choosing `sync`, which also deletes records no longer desired by Kubernetes.
 ## Values
 
 All provider and controller settings are nested under `external-dns` and are
-passed to the upstream chart. See this chart's
-[`values.yaml`](https://github.com/mattgmoser/external-dns-porkbun-webhook/blob/main/charts/external-dns-porkbun-webhook/values.yaml)
-and the upstream
-[`external-dns` values](https://artifacthub.io/packages/helm/external-dns/external-dns?modal=values).
+passed to the upstream chart. Use `helm show values ... --version 0.4.0` as
+shown above for this chart's immutable defaults. The dependency's exact
+[`external-dns` values](https://github.com/kubernetes-sigs/external-dns/blob/external-dns-helm-chart-1.21.1/charts/external-dns/values.yaml)
+are also version-pinned.
 
 The supplied values isolate the Kubernetes API token to the ExternalDNS
 container. The webhook does not receive that token. Credential Secrets are not
 created by this chart and are never deleted with the release.
 
+## TXT representation
+
+Porkbun stores TXT content as one unquoted string. The webhook removes one
+matching outer pair of double quotes from ExternalDNS input. Common SPF, DKIM,
+and verification values work, but multi-string segment boundaries are not
+preserved as distinct segments and escaped embedded quotes may be normalized.
+Verify records that rely on those presentation details after reconciliation.
+
 ## Migrating from chart 0.3.0 or earlier
 
-The chart rejects an in-place upgrade that still carries legacy standalone
-values: older versions installed only the webhook and expected a separate
-ExternalDNS controller. First record the existing controller's `txtOwnerId`,
-`txtPrefix`, domain filters, policy, and Secret name. Remove the old standalone
-webhook and ensure only one writable ExternalDNS controller remains, then
-install this chart with those ownership values preserved.
+Older charts installed only the webhook and expected a separately managed
+ExternalDNS controller. Do not point the generic install command at that old
+release. First record the controller's `txtOwnerId`, `txtPrefix`, domain
+filters, and policy.
 
-If ExternalDNS is already managed directly through the official upstream
-chart, it is also valid to keep that release and use this project's
-[version-pinned sidecar values](https://github.com/mattgmoser/external-dns-porkbun-webhook/blob/main/docs/external-dns-values.yaml)
-instead of adopting the wrapper.
+If the old chart created credentials from inline `porkbun.apiKey` values,
+create an independently managed Secret before uninstalling or upgrading it,
+preferably with a rotated key. Either operation removes that chart-owned Secret
+from the release. If it used `porkbun.existingSecret`, verify the Secret remains
+present and is not owned by the legacy Helm release.
+
+Then choose one path:
+
+- Keep an ExternalDNS release already managed through the official chart, add
+  this project's
+  [version-pinned sidecar values](https://github.com/mattgmoser/external-dns-porkbun-webhook/blob/v0.4.0/docs/external-dns-values.yaml),
+  roll it out, and remove the old standalone webhook release.
+- To adopt this wrapper, stop and remove the separately managed controller and
+  old webhook release, then install `0.4.0` with the preserved ownership values
+  and independent Secret.
+
+Never overlap writable controllers for the same names. As a final guard,
+`0.4.0` rejects every in-place upgrade unless
+`migration.acknowledgeControllerReplacement=true` is explicitly set. The
+acknowledgement confirms that you completed the handoff; it does not perform
+the migration.
 
 ## Operations
 

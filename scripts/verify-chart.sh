@@ -8,12 +8,32 @@ rendered_wrapper=$(mktemp)
 rendered_upstream=$(mktemp)
 normalized_wrapper=$(mktemp)
 normalized_upstream=$(mktemp)
+wrapper_values=$(mktemp)
+upstream_values=$(mktemp)
 package_dir=$(mktemp -d)
 
-helm template external-dns "$chart_dir" --namespace external-dns > "$rendered_wrapper"
+cleanup() {
+  rm -f \
+    "$rendered_wrapper" \
+    "$rendered_upstream" \
+    "$normalized_wrapper" \
+    "$normalized_upstream" \
+    "$wrapper_values" \
+    "$upstream_values"
+  rm -rf "$package_dir"
+}
+trap cleanup EXIT
+
+bash scripts/chart-test-values.sh "$chart_dir/values.yaml" > "$wrapper_values"
+bash scripts/chart-test-values.sh docs/external-dns-values.yaml > "$upstream_values"
+
+helm lint --strict "$chart_dir" --values "$wrapper_values"
+helm template external-dns "$chart_dir" \
+  --namespace external-dns \
+  --values "$wrapper_values" > "$rendered_wrapper"
 helm template external-dns "$upstream_chart" \
   --namespace external-dns \
-  --values docs/external-dns-values.yaml > "$rendered_upstream"
+  --values "$upstream_values" > "$rendered_upstream"
 
 if command -v kubeconform >/dev/null 2>&1; then
   kubeconform_cmd=(kubeconform)
@@ -76,15 +96,66 @@ fi
 
 # Rendering the packaged archive proves it is self-contained and does not need
 # network access to resolve its pinned dependency at install time.
-helm template external-dns "$package" --namespace external-dns >/dev/null
+helm template external-dns "$package" \
+  --namespace external-dns \
+  --values "$wrapper_values" >/dev/null
 
-# Stored values from the deprecated standalone chart identify a potentially
-# dangerous in-place migration. The new chart must stop instead of silently
-# starting a second ExternalDNS controller with example ownership settings.
+# Supplying a fresh values file drops the old chart's keys. This exact upgrade
+# shape must still stop instead of silently starting a second controller.
 if helm template external-dns "$chart_dir" \
   --namespace external-dns \
   --is-upgrade \
-  --set legacyStandalone.acceptRisk=true >/dev/null 2>&1; then
-  echo 'legacy standalone upgrades must be rejected' >&2
+  --values "$wrapper_values" >/dev/null 2>&1; then
+  echo 'unacknowledged topology-changing upgrades must be rejected' >&2
   exit 1
 fi
+
+# A maintainer who has completed the documented controller handoff must have a
+# deliberate escape hatch for an in-place migration.
+helm template external-dns "$chart_dir" \
+  --namespace external-dns \
+  --is-upgrade \
+  --values "$wrapper_values" \
+  --set migration.acknowledgeControllerReplacement=true >/dev/null
+
+# Helm's --set-string values are non-empty strings and therefore truthy in Go
+# templates. Only the exact YAML boolean true may acknowledge this migration.
+for string_acknowledgement in false true; do
+  if helm template external-dns "$chart_dir" \
+    --namespace external-dns \
+    --is-upgrade \
+    --values "$wrapper_values" \
+    --set-string "migration.acknowledgeControllerReplacement=$string_acknowledgement" >/dev/null 2>&1; then
+    echo "string migration acknowledgement must be rejected: $string_acknowledgement" >&2
+    exit 1
+  fi
+done
+
+# Placeholder values must fail before any workload reaches the cluster.
+if helm template external-dns "$chart_dir" --namespace external-dns >/dev/null 2>&1; then
+  echo 'default placeholder values must not be installable' >&2
+  exit 1
+fi
+
+# Exercise every fail-closed placeholder independently so an earlier check
+# cannot mask a regression in a later one.
+placeholder_overrides=(
+  'external-dns.provider.webhook.env[2].value=example.com'
+  'external-dns.provider.webhook.env[2].value='
+  'external-dns.provider.webhook.env[3].value=example.com'
+  'external-dns.provider.webhook.env[3].value='
+  'external-dns.domainFilters[0]=example.com'
+  'external-dns.domainFilters[0]='
+  'external-dns.txtOwnerId=change-me'
+  'external-dns.txtOwnerId=CHANGE-ME'
+  'external-dns.txtOwnerId='
+)
+for override in "${placeholder_overrides[@]}"; do
+  if helm template external-dns "$chart_dir" \
+    --namespace external-dns \
+    --values "$wrapper_values" \
+    --set-string "$override" >/dev/null 2>&1; then
+    echo "placeholder must be rejected: $override" >&2
+    exit 1
+  fi
+done

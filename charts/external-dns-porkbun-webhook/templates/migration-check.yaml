@@ -1,3 +1,6 @@
-{{- if and .Release.IsUpgrade (or (hasKey .Values "legacyStandalone") (hasKey .Values "porkbun")) -}}
-{{- fail "chart 0.3.0 and earlier used a standalone webhook topology and cannot be upgraded in place safely; preserve TXT ownership settings, remove the legacy release, and follow the 0.4.0 migration guide" -}}
+{{- $migration := .Values.migration | default dict -}}
+{{- $acknowledgement := $migration.acknowledgeControllerReplacement | default false -}}
+{{- $acknowledged := and (kindIs "bool" $acknowledgement) $acknowledgement -}}
+{{- if and .Release.IsUpgrade (not $acknowledged) -}}
+{{- fail "chart 0.4.0 changes this release from webhook-only to a complete ExternalDNS deployment; before any in-place upgrade, preserve TXT ownership settings, ensure no second writable controller will remain, and set migration.acknowledgeControllerReplacement=true (the safer legacy migration is uninstall then install)" -}}
 {{- end -}}

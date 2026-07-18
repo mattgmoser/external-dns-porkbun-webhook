@@ -1,0 +1,38 @@
+{{- $externalDNS := index .Values "external-dns" | default dict -}}
+{{- $provider := index $externalDNS "provider" | default dict -}}
+{{- $webhook := index $provider "webhook" | default dict -}}
+{{- $env := index $webhook "env" | default list -}}
+{{- $porkbunDomain := "" -}}
+{{- $webhookDomainFilter := "" -}}
+{{- range $entry := $env -}}
+  {{- if eq ($entry.name | default "") "PORKBUN_DOMAIN" -}}
+    {{- $porkbunDomain = $entry.value | default "" -}}
+  {{- else if eq ($entry.name | default "") "DOMAIN_FILTER" -}}
+    {{- $webhookDomainFilter = $entry.value | default "" -}}
+  {{- end -}}
+{{- end -}}
+{{- $porkbunDomain = trimSuffix "." (lower (trim $porkbunDomain)) -}}
+{{- $webhookDomainFilter = trimSuffix "." (lower (trim $webhookDomainFilter)) -}}
+{{- if or (empty $porkbunDomain) (eq $porkbunDomain "example.com") -}}
+{{- fail "set external-dns.provider.webhook.env PORKBUN_DOMAIN to the Porkbun apex zone; the example value is not installable" -}}
+{{- end -}}
+{{- if or (empty $webhookDomainFilter) (eq $webhookDomainFilter "example.com") -}}
+{{- fail "set external-dns.provider.webhook.env DOMAIN_FILTER to the intended webhook scope; the example value is not installable" -}}
+{{- end -}}
+{{- $domainFilters := index $externalDNS "domainFilters" | default list -}}
+{{- if empty $domainFilters -}}
+{{- fail "set external-dns.domainFilters to the DNS names this controller may manage" -}}
+{{- end -}}
+{{- range $domainFilter := $domainFilters -}}
+  {{- $normalizedDomainFilter := trimSuffix "." (lower (trim $domainFilter)) -}}
+  {{- if empty $normalizedDomainFilter -}}
+    {{- fail "external-dns.domainFilters entries must not be empty" -}}
+  {{- end -}}
+  {{- if eq $normalizedDomainFilter "example.com" -}}
+    {{- fail "replace example.com in external-dns.domainFilters before installing" -}}
+  {{- end -}}
+{{- end -}}
+{{- $txtOwnerID := index $externalDNS "txtOwnerId" | default "" | trim -}}
+{{- if or (empty $txtOwnerID) (eq (lower $txtOwnerID) "change-me") -}}
+{{- fail "set external-dns.txtOwnerId to a stable value unique to this controller; change-me is not installable" -}}
+{{- end -}}

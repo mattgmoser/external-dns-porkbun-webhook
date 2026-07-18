@@ -49,5 +49,12 @@ jobs:
       - name: Check documentation links
         uses: lycheeverse/lychee-action@v2.9.0
         with:
-          args: --no-progress './**/*.md' './.github/helm-repository/*.html'
+          # The release-pinned link becomes live when this candidate is tagged.
+          # All other links, including the pinned upstream dependency, are live
+          # and checked on the pull request/main commit.
+          args: >-
+            --no-progress
+            --exclude '^https://github\.com/mattgmoser/external-dns-porkbun-webhook/blob/v0\.4\.0/'
+            './**/*.md'
+            './.github/helm-repository/*.html'
           fail: true

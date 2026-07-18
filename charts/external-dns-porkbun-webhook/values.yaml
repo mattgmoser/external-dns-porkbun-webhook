@@ -2,6 +2,14 @@
 # are passed directly to that dependency. Replace every example value before
 # installing, and keep txtOwnerId/txtPrefix stable for the lifetime of a zone.
 
+migration:
+  # Chart 0.4.0 changes this package from a webhook-only release into a complete
+  # ExternalDNS deployment. Helm templates cannot reliably identify the chart
+  # version being replaced, so every in-place upgrade must explicitly confirm
+  # that the separately managed controller has been accounted for. New installs
+  # do not need this acknowledgement.
+  acknowledgeControllerReplacement: false
+
 external-dns:
   provider:
     name: webhook
