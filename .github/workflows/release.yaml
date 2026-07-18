@@ -108,7 +108,9 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=sha,prefix=sha-,format=short
+            # A semver event rebuilds the same commit with a release VERSION.
+            # Restrict sha-* to branch builds so that candidate tags never move.
+            type=sha,prefix=sha-,format=short,enable=${{ github.ref_type == 'branch' }}
 
       - name: Build and push
         uses: docker/build-push-action@v7
