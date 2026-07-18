@@ -14,47 +14,68 @@ Watches your Kubernetes Ingress / Service / Gateway resources and keeps a Porkbu
 Porkbun isn't built into upstream External-DNS, and the existing community webhooks have gaps (no multi-arch images, dated External-DNS versions, no Helm chart). This project aims to be the canonical, batteries-included Porkbun integration:
 
 - **Multi-arch images** - `linux/amd64`, `linux/arm64`, `linux/arm/v7` (Pi support)
-- **Helm chart** - drop-in install
+- **Official ExternalDNS chart integration** - secure same-Pod sidecar values included
 - **Prometheus metrics** + Grafana-friendly histograms
-- **Health and readiness probes** with credential validation
-- **Rate-limit safe** - respects Porkbun's 1 req/sec API limit by serializing
-- **Retry with exponential backoff + jitter** on 5xx and transient network errors
+- **Health and readiness probes** with credential and zone-access validation
+- **Conservatively rate limited** - serializes Porkbun API calls with a safe minimum gap
+- **Retry-safe writes** - idempotency keys plus bounded retries prevent duplicates after ambiguous failures
+- **Complete Porkbun DNS type coverage** - including priority-aware MX/SRV and ALIAS interoperability
 - **Dry-run mode** for safe testing
 - **Distroless container** (small, runs as nonroot)
 - **Domain filter scoping** - narrow what the webhook can touch
-- **Tested** with a mock Porkbun API (unit tests for the client and webhook handlers)
+- **Tested** with an in-memory mock Porkbun API
 - **Apache 2.0** licensed
 
 ## Quickstart (Helm)
 
-Install via Helm. Provide your Porkbun creds via an existing Secret (recommended) or inline:
+The supported installation is a sidecar in the **official ExternalDNS chart**. ExternalDNS's provider protocol has no authentication, so the provider listener is bound to `127.0.0.1:8888` and is reachable only from the ExternalDNS container in the same Pod. The separate `:8080` ops listener remains available for health checks and metrics.
+
+Start by creating a namespace and an existing Secret. Avoid putting API keys in Helm values: Helm stores release values in the cluster and command-line values can remain in shell history.
+
+Use a dedicated Porkbun API key and restrict it to the managed domain in [Porkbun's API key settings](https://porkbun.com/account/api). If the cluster has a stable egress address, add an IP restriction too. Porkbun documents both restrictions as per-key controls, so they limit the credential's blast radius independently of Kubernetes.
 
 ```sh
-helm repo add edns-porkbun https://mattgmoser.github.io/external-dns-porkbun-webhook
-helm repo update
-
-# 1. Create a Secret with your Porkbun API credentials
-kubectl create namespace external-dns
+kubectl create namespace external-dns --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n external-dns create secret generic porkbun-creds \
   --from-literal=PORKBUN_API_KEY="$YOUR_API_KEY" \
-  --from-literal=PORKBUN_SECRET_API_KEY="$YOUR_SECRET_KEY"
-
-# 2. Install the webhook
-helm install porkbun-webhook edns-porkbun/external-dns-porkbun-webhook \
-  -n external-dns \
-  --set porkbun.domain=example.com \
-  --set porkbun.existingSecret.name=porkbun-creds
-
-# 3. Install upstream external-dns pointing at the webhook
-helm install external-dns external-dns/external-dns -n external-dns \
-  --set provider.name=webhook \
-  --set provider.webhook.url=http://porkbun-webhook-external-dns-porkbun-webhook.external-dns.svc.cluster.local:8888 \
-  --set domainFilters[0]=example.com \
-  --set sources='{ingress,service}' \
-  --set policy=sync
+  --from-literal=PORKBUN_SECRET_API_KEY="$YOUR_SECRET_API_KEY" \
+  --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-That's it. Add an Ingress with a hostname under your domain and watch the A record appear at Porkbun.
+Copy [`docs/external-dns-values.yaml`](docs/external-dns-values.yaml), then change all of these before installing:
+
+- Secret name if you did not use `porkbun-creds`
+- `PORKBUN_DOMAIN`, `DOMAIN_FILTER`, and `domainFilters`
+- `txtOwnerId` to a stable, unique cluster identifier
+- `txtPrefix` if another ExternalDNS instance already owns records in the zone
+
+Never change `txtOwnerId` or `txtPrefix` casually after ExternalDNS has created records; those fields are its ownership boundary. If this is an upgrade, preserve the values already used by the cluster.
+
+```sh
+helm repo add external-dns https://kubernetes-sigs.github.io/external-dns/
+helm repo update
+
+helm upgrade --install external-dns external-dns/external-dns \
+  --version 1.21.1 \
+  --namespace external-dns \
+  --values external-dns-values.yaml
+```
+
+The example starts with ExternalDNS's safer `upsert-only` policy. Review the plan and ownership TXT records before opting into `sync`, which also deletes records no longer desired by Kubernetes.
+
+The example disables automatic ServiceAccount-token mounts and explicitly projects the token only into the ExternalDNS container. The webhook sidecar therefore does not inherit the controller's Kubernetes credentials. Porkbun credentials are environment variables read at process start; after rotating the Secret, restart the Deployment so the sidecar loads the new values:
+
+```sh
+kubectl -n external-dns rollout restart deployment/external-dns
+```
+
+### Webhook timeouts and large changes
+
+ExternalDNS defaults to a 15-second total webhook deadline, while Porkbun operations are serialized and a plan can easily contain hundreds of changes. The canonical values use a five-minute total deadline (`30s` + `4m30s`); this covers roughly 200 single-record mutations at the conservative request rate, while ordinary reconciliations complete much sooner. Multi-target changes or retries can still exceed that budget. ExternalDNS v0.21 does not apply its generic `batch-change-size` setting to webhook providers, so that flag cannot safely shorten this bound. Stage unusually large migrations and watch both containers' logs rather than setting an unbounded timeout.
+
+### Legacy standalone chart
+
+The chart published by this repository is deprecated as of `0.3.0`. It deploys the webhook in a separate Pod and must expose the unauthenticated mutation API through a ClusterIP Service. It is retained only for existing installations and now requires the explicit acknowledgement `legacyStandalone.acceptRisk=true`. New installations should use the official ExternalDNS sidecar configuration above.
 
 ## Configuration
 
@@ -66,7 +87,7 @@ Environment variables consumed by the binary:
 | `PORKBUN_SECRET_API_KEY` | yes | - | Porkbun secret API key (`sk1_...`) |
 | `PORKBUN_DOMAIN` | yes | - | Apex zone, e.g. `example.com` |
 | `DOMAIN_FILTER` | no | `[PORKBUN_DOMAIN]` | Comma-separated list of subdomain filters |
-| `WEBHOOK_LISTEN` | no | `:8888` | External-DNS webhook server bind |
+| `WEBHOOK_LISTEN` | no | `127.0.0.1:8888` | Provider server bind; keep the loopback default for the sidecar |
 | `OPS_LISTEN` | no | `:8080` | Health/readiness/metrics bind |
 | `DRY_RUN` | no | `false` | Log changes but don't apply |
 | `CACHE_TTL` | no | `1m` | Memory cache for `Records()` calls |
@@ -91,9 +112,13 @@ Environment variables consumed by the binary:
 
 External-DNS reconciles cluster-state into desired DNS records. For Porkbun (not a built-in provider) it makes RPC calls to a webhook server over HTTP. This project IS that webhook server.
 
+### Supported record types
+
+The provider round-trips every DNS type currently accepted by Porkbun: `A`, `AAAA`, `CNAME`, `TXT`, `MX`, `NS`, `SRV`, `TLSA`, `CAA`, `SSHFP`, `HTTPS`, and `SVCB`. Porkbun `ALIAS` records are presented to ExternalDNS as CNAME endpoints with `providerSpecific.alias=true`; an apex CNAME is automatically stored as `ALIAS`. MX and SRV priorities are translated between ExternalDNS's target syntax and Porkbun's separate `prio` field.
+
 ## Endpoints
 
-The webhook side serves the [external-dns webhook protocol v1](https://github.com/kubernetes-sigs/external-dns/blob/master/docs/proposal/webhook-provider.md):
+The webhook side serves the [ExternalDNS webhook protocol v1](https://kubernetes-sigs.github.io/external-dns/latest/docs/tutorials/webhook-provider/):
 
 - `GET /` - domain filter negotiation
 - `GET /records` - return current managed records
@@ -103,7 +128,7 @@ The webhook side serves the [external-dns webhook protocol v1](https://github.co
 The ops side (separate port) serves:
 
 - `GET /healthz` - liveness (just "ok")
-- `GET /readyz` - readiness - green only when Porkbun credentials validate
+- `GET /readyz` - readiness - green only when credentials work and the configured zone can be retrieved
 - `GET /metrics` - Prometheus exposition
 
 ## Metrics
@@ -117,23 +142,24 @@ The ops side (separate port) serves:
 | `edns_porkbun_changes_total{kind=create|update|delete}` | counter | Change volume |
 | `edns_porkbun_ready` | gauge | 1 if creds + connectivity good |
 
-A `ServiceMonitor` is included in the chart for `kube-prometheus-stack` users (`serviceMonitor.enabled=true`).
+The official ExternalDNS chart can add the webhook endpoint to its `ServiceMonitor`; set `serviceMonitor.enabled=true` in the canonical values when Prometheus Operator is configured to discover that namespace. The deprecated standalone chart also retains its own optional `ServiceMonitor` for existing users.
 
 ## Development
 
-Requires Go 1.23+.
+Requires Go 1.26.1 or newer. `go.mod` selects the security-patched Go 1.26.5 toolchain used by CI and the container build when automatic toolchain selection is enabled.
 
 ```sh
 make build            # build local binary
 make test             # unit tests with race detector
 make test-coverage    # generate coverage.html
 make lint             # vet + gofmt + golangci-lint
+make helm-check       # render canonical + legacy Helm configurations
 make docker           # multi-arch buildx push
 ```
 
 Tests use an in-memory mock of the Porkbun API; they don't need real credentials.
 
-To run against a real cluster locally:
+To run the webhook locally against a real Porkbun zone:
 
 ```sh
 PORKBUN_API_KEY=pk1_... \

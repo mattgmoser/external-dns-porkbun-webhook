@@ -10,6 +10,11 @@ metadata:
     {{- include "edns-porkbun.labels" . | nindent 4 }}
     {{- with .Values.serviceMonitor.labels }}{{ toYaml . | nindent 4 }}{{- end }}
 spec:
+  {{- if and .Values.serviceMonitor.namespace (ne .Values.serviceMonitor.namespace .Release.Namespace) }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace | quote }}
+  {{- end }}
   selector:
     matchLabels: {{- include "edns-porkbun.selectorLabels" . | nindent 6 }}
   endpoints:

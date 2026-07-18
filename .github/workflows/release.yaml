@@ -7,27 +7,87 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # for chart-releaser
-  packages: write   # for ghcr.io image push
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  # Keep tagged releases immutable, but prevent an older main run from
+  # finishing last and moving the mutable main image tag backwards.
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify modules
+        run: go mod tidy -diff
+      - name: Vet
+        run: go vet ./...
+      - name: Verify formatting
+        shell: bash
+        run: |
+          out=$(gofmt -l . | grep -v '^vendor/' || true)
+          if [ -n "$out" ]; then
+            echo "::error::Files need gofmt:"
+            echo "$out"
+            exit 1
+          fi
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          args: --timeout=5m
+      - name: Test
+        run: go test -race ./...
+      - name: Vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+      - name: Install Helm
+        uses: azure/setup-helm@v5.0.1
+        with:
+          version: v3.21.3
+      - name: Verify canonical and legacy Helm configurations
+        run: make helm-check
+      - name: Verify release versions
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          chart_version="$(awk '$1 == "version:" {print $2; exit}' charts/external-dns-porkbun-webhook/Chart.yaml)"
+          app_version="$(awk '$1 == "appVersion:" {gsub(/\"/, "", $2); print $2; exit}' charts/external-dns-porkbun-webhook/Chart.yaml)"
+          example_image_tag="$(awk '$1 == "tag:" {gsub(/\"/, "", $2); print $2; exit}' docs/external-dns-values.yaml)"
+          test "$expected" = "$chart_version"
+          test "$expected" = "$app_version"
+          test "$expected" = "$example_image_tag"
+          grep -Eq "^## ${expected}([[:space:]]|$)" CHANGELOG.md
+
   build-image:
     runs-on: ubuntu-latest
+    needs: verify
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -35,9 +95,13 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # metadata-action's auto flavor adds latest only for the stable
+          # semver tag event; main publishes main + sha-* candidate tags.
+          flavor: |
+            latest=auto
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -45,16 +109,17 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=sha,prefix=sha-,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
@@ -64,8 +129,10 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build-image
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -75,7 +142,9 @@ jobs:
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
 
       - name: Install Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5.0.1
+        with:
+          version: v3.21.3
 
       # First-release bootstrap: chart-releaser pushes packaged charts to a
       # gh-pages branch. On a freshly cloned/forked repo that branch doesn't
@@ -107,7 +176,7 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         run: |
-          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
           # Helm package --sign needs the legacy secring.gpg format. Modern GPG
           # (2.x) doesn't write it by default; re-export the secret keys to
           # produce one helm can read.
@@ -124,16 +193,18 @@ jobs:
             charts/external-dns-porkbun-webhook
           ls -la .cr-release-packages
 
-      # Install the chart-releaser CLI directly. We avoid the helm/chart-releaser-action
-      # wrapper because v1.7.0 has a bug (latest_tag: unbound variable) that fires
-      # after a successful upload when skip_packaging is set, making the job exit
-      # red even though the release succeeded.
+      # Install the chart-releaser CLI directly and verify the release checksum.
       - name: Install chart-releaser
         run: |
-          CR_VERSION=1.7.0
-          curl -sSL "https://github.com/helm/chart-releaser/releases/download/v${CR_VERSION}/chart-releaser_${CR_VERSION}_linux_amd64.tar.gz" \
-            | tar xz -C /tmp cr
-          sudo install /tmp/cr /usr/local/bin/cr
+          CR_VERSION=1.8.1
+          archive="chart-releaser_${CR_VERSION}_linux_amd64.tar.gz"
+          base_url="https://github.com/helm/chart-releaser/releases/download/v${CR_VERSION}"
+          cd "$RUNNER_TEMP"
+          curl --fail --silent --show-error --location --output "$archive" "$base_url/$archive"
+          curl --fail --silent --show-error --location --output checksums.txt "$base_url/checksums.txt"
+          grep "  ${archive}$" checksums.txt | sha256sum --check -
+          tar xzf "$archive" cr
+          sudo install cr /usr/local/bin/cr
           cr version
 
       - name: Upload chart to GitHub releases

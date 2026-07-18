@@ -42,6 +42,43 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{ printf "%s:%s" .Values.image.repository $tag }}
 {{- end -}}
 
+{{/* Fail early rather than installing a Pod that can never start safely. */}}
+{{- define "edns-porkbun.validateValues" -}}
+{{- if not .Values.legacyStandalone.acceptRisk -}}
+{{- fail "DEPRECATED: the standalone chart exposes an unauthenticated DNS mutation API. Use docs/external-dns-values.yaml, or explicitly set legacyStandalone.acceptRisk=true to accept the legacy topology" -}}
+{{- end -}}
+{{- if empty .Values.porkbun.domain -}}
+{{- fail ".Values.porkbun.domain is required" -}}
+{{- end -}}
+{{- if and (empty .Values.porkbun.existingSecret.name) (or (empty .Values.porkbun.apiKey) (empty .Values.porkbun.secretApiKey)) -}}
+{{- fail "set .Values.porkbun.existingSecret.name, or set both inline credentials for testing" -}}
+{{- end -}}
+{{- if or (lt (int .Values.replicaCount) 0) (gt (int .Values.replicaCount) 1) -}}
+{{- fail ".Values.replicaCount must be 0 or 1 because the Porkbun rate limiter is process-local" -}}
+{{- end -}}
+{{- if or (lt (int .Values.containerPorts.webhook) 1) (gt (int .Values.containerPorts.webhook) 65535) -}}
+{{- fail ".Values.containerPorts.webhook must be between 1 and 65535" -}}
+{{- end -}}
+{{- if or (lt (int .Values.containerPorts.ops) 1) (gt (int .Values.containerPorts.ops) 65535) -}}
+{{- fail ".Values.containerPorts.ops must be between 1 and 65535" -}}
+{{- end -}}
+{{- if eq (int .Values.containerPorts.webhook) (int .Values.containerPorts.ops) -}}
+{{- fail ".Values.containerPorts.webhook and .Values.containerPorts.ops must be different" -}}
+{{- end -}}
+{{- if ne .Values.service.type "ClusterIP" -}}
+{{- fail ".Values.service.type must remain ClusterIP; never expose the unauthenticated webhook through a NodePort or LoadBalancer" -}}
+{{- end -}}
+{{- if or (lt (int .Values.service.webhookPort) 1) (gt (int .Values.service.webhookPort) 65535) -}}
+{{- fail ".Values.service.webhookPort must be between 1 and 65535" -}}
+{{- end -}}
+{{- if or (lt (int .Values.service.metricsPort) 1) (gt (int .Values.service.metricsPort) 65535) -}}
+{{- fail ".Values.service.metricsPort must be between 1 and 65535" -}}
+{{- end -}}
+{{- if eq (int .Values.service.webhookPort) (int .Values.service.metricsPort) -}}
+{{- fail ".Values.service.webhookPort and .Values.service.metricsPort must be different" -}}
+{{- end -}}
+{{- end -}}
+
 {{/* Build the env vars for credentials and config. */}}
 {{- define "edns-porkbun.env" -}}
 - name: PORKBUN_DOMAIN
@@ -59,9 +96,9 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 - name: LOG_FORMAT
   value: {{ .Values.logFormat | quote }}
 - name: WEBHOOK_LISTEN
-  value: {{ .Values.webhookListen | quote }}
+  value: {{ printf ":%v" .Values.containerPorts.webhook | quote }}
 - name: OPS_LISTEN
-  value: {{ .Values.opsListen | quote }}
+  value: {{ printf ":%v" .Values.containerPorts.ops | quote }}
 {{- if .Values.porkbun.existingSecret.name }}
 - name: PORKBUN_API_KEY
   valueFrom:

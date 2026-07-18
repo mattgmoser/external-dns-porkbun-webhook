@@ -11,6 +11,7 @@ package porkbun
 import (
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,9 +27,14 @@ import (
 )
 
 const (
-	defaultBaseURL    = "https://api.porkbun.com/api/json/v3"
-	defaultUserAgent  = "external-dns-porkbun-webhook"
-	defaultRateMinGap = 1100 * time.Millisecond // > 1 req/sec, with safety margin
+	defaultBaseURL         = "https://api.porkbun.com/api/json/v3"
+	defaultUserAgent       = "external-dns-porkbun-webhook"
+	defaultRateMinGap      = 1100 * time.Millisecond // > 1 req/sec, with safety margin
+	defaultHTTPTimeout     = 10 * time.Second
+	defaultMaxRetries      = 2
+	maxServerRetryDelay    = 10 * time.Second
+	maxErrorResponseBytes  = 64 << 10
+	idempotencyKeyByteSize = 16
 )
 
 // Client is a Porkbun DNS API client.
@@ -54,7 +61,8 @@ type Option func(*Client)
 // WithBaseURL overrides the API base URL (useful for tests).
 func WithBaseURL(u string) Option { return func(c *Client) { c.baseURL = strings.TrimRight(u, "/") } }
 
-// WithHTTPClient overrides the HTTP client.
+// WithHTTPClient overrides the HTTP client. Redirects are still rejected so a
+// credential-bearing request body cannot be forwarded to another endpoint.
 func WithHTTPClient(h *http.Client) Option { return func(c *Client) { c.httpClient = h } }
 
 // WithUserAgent overrides the User-Agent header.
@@ -74,15 +82,24 @@ func New(apiKey, secretAPIKey string, opts ...Option) *Client {
 		baseURL:      defaultBaseURL,
 		userAgent:    defaultUserAgent,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: defaultHTTPTimeout,
 		},
 		minGap:     defaultRateMinGap,
-		maxRetries: 4,
+		maxRetries: defaultMaxRetries,
 		maxBackoff: 8 * time.Second,
 	}
 	for _, opt := range opts {
 		opt(c)
 	}
+	if c.httpClient == nil {
+		c.httpClient = &http.Client{Timeout: defaultHTTPTimeout}
+	}
+	// Clone rather than mutate a caller-provided client. Porkbun requests carry
+	// credentials in their POST bodies, so following a 307/308 redirect could
+	// disclose them to a different host.
+	redirectSafeClient := *c.httpClient
+	redirectSafeClient.CheckRedirect = rejectRedirect
+	c.httpClient = &redirectSafeClient
 	return c
 }
 
@@ -109,9 +126,13 @@ type baseRequest struct {
 }
 
 type baseResponse struct {
-	Status  string `json:"status"`
-	Message string `json:"message,omitempty"`
+	Status    string `json:"status"`
+	Message   string `json:"message,omitempty"`
+	Code      string `json:"code,omitempty"`
+	RequestID string `json:"requestId,omitempty"`
 }
+
+func (r *baseResponse) responseBase() *baseResponse { return r }
 
 type retrieveResponse struct {
 	baseResponse
@@ -199,31 +220,80 @@ func (c *Client) Delete(ctx context.Context, domain, id string) error {
 
 // ----- internals -----
 
+// APIError describes an error returned by the Porkbun API. HTTPStatus is zero
+// when no HTTP response was available. RetryAfter is populated from a valid
+// Retry-After or X-RateLimit-Reset response header.
+type APIError struct {
+	HTTPStatus int
+	Code       string
+	Message    string
+	RequestID  string
+	Retryable  bool
+	RetryAfter time.Duration
+}
+
+func (e *APIError) Error() string {
+	if e == nil {
+		return "porkbun api error"
+	}
+
+	message := e.Message
+	if message == "" {
+		message = "(no message)"
+	}
+
+	details := make([]string, 0, 2)
+	// Keep the long-standing error text for application errors returned with
+	// HTTP 200 while still exposing the status through HTTPStatus.
+	if e.HTTPStatus >= http.StatusBadRequest {
+		details = append(details, fmt.Sprintf("http %d", e.HTTPStatus))
+	}
+	if e.Code != "" {
+		details = append(details, "code "+e.Code)
+	}
+
+	prefix := "porkbun api error"
+	if len(details) != 0 {
+		prefix += " (" + strings.Join(details, ", ") + ")"
+	}
+	if e.RequestID != "" {
+		return fmt.Sprintf("%s: %s (request id %s)", prefix, message, e.RequestID)
+	}
+	return prefix + ": " + message
+}
+
 func checkStatus(r baseResponse) error {
 	if r.Status != "SUCCESS" {
-		msg := r.Message
-		if msg == "" {
-			msg = "(no message)"
-		}
-		return fmt.Errorf("porkbun api error: %s", msg)
+		return apiErrorFromResponse(0, r, nil)
 	}
 	return nil
 }
 
 // do performs a request with retry, backoff, and rate limiting.
 func (c *Client) do(ctx context.Context, path string, body any, out any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	idempotencyKey, err := newIdempotencyKey()
+	if err != nil {
+		return fmt.Errorf("generating idempotency key: %w", err)
+	}
+
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
-			backoff := c.computeBackoff(attempt)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(backoff):
+			delay, retry := c.retryDelay(attempt, lastErr)
+			if !retry {
+				return lastErr
+			}
+			if err := waitContext(ctx, delay); err != nil {
+				return err
 			}
 		}
-		c.waitRate(ctx)
-		err := c.doOnce(ctx, path, body, out)
+		if err := c.waitRate(ctx); err != nil {
+			return err
+		}
+		err := c.doOnce(ctx, path, body, out, idempotencyKey)
 		if err == nil {
 			return nil
 		}
@@ -236,23 +306,35 @@ func (c *Client) do(ctx context.Context, path string, body any, out any) error {
 }
 
 // waitRate blocks until at least minGap has passed since the previous call.
-// If ctx is cancelled while waiting we return without updating lastCall, so
-// the next caller's pacing isn't shifted by an aborted wait.
-func (c *Client) waitRate(ctx context.Context) {
-	c.rateMu.Lock()
-	defer c.rateMu.Unlock()
-	if !c.lastCall.IsZero() {
-		elapsed := time.Since(c.lastCall)
-		if elapsed < c.minGap {
-			wait := c.minGap - elapsed
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(wait):
-			}
+// If ctx is cancelled while waiting it returns ctx.Err without updating
+// lastCall, so the next caller's pacing isn't shifted by an aborted wait.
+func (c *Client) waitRate(ctx context.Context) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		c.rateMu.Lock()
+		if err := ctx.Err(); err != nil {
+			c.rateMu.Unlock()
+			return err
+		}
+		now := time.Now()
+		wait := c.minGap - now.Sub(c.lastCall)
+		if c.lastCall.IsZero() || wait <= 0 {
+			c.lastCall = now
+			c.rateMu.Unlock()
+			return nil
+		}
+		c.rateMu.Unlock()
+
+		// Do not hold rateMu during the wait. Other callers can then observe
+		// their own context cancellation; after waking, each caller rechecks
+		// lastCall so only one can claim the next request slot.
+		if err := waitContext(ctx, wait); err != nil {
+			return err
 		}
 	}
-	c.lastCall = time.Now()
 }
 
 func (c *Client) computeBackoff(attempt int) time.Duration {
@@ -265,7 +347,51 @@ func (c *Client) computeBackoff(attempt int) time.Duration {
 	return base + jitter - base/4
 }
 
-func (c *Client) doOnce(ctx context.Context, path string, body any, out any) error {
+func (c *Client) retryDelay(attempt int, lastErr error) (time.Duration, bool) {
+	delay := c.computeBackoff(attempt)
+	var apiErr *APIError
+	if !errors.As(lastErr, &apiErr) || apiErr.RetryAfter <= delay {
+		return delay, true
+	}
+	// Waiting longer than this without a caller-supplied deadline could tie up
+	// a webhook request indefinitely. Do not retry early when the server asks
+	// for a longer pause; return the typed error to the caller instead.
+	if apiErr.RetryAfter > maxServerRetryDelay {
+		return 0, false
+	}
+	return apiErr.RetryAfter, true
+}
+
+func waitContext(ctx context.Context, delay time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func newIdempotencyKey() (string, error) {
+	random := make([]byte, idempotencyKeyByteSize)
+	if _, err := cryptorand.Read(random); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", random), nil
+}
+
+func rejectRedirect(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+func (c *Client) doOnce(ctx context.Context, path string, body any, out any, idempotencyKey string) error {
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("encoding request: %w", err)
@@ -276,24 +402,203 @@ func (c *Client) doOnce(ctx context.Context, path string, body any, out any) err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Idempotency-Key", idempotencyKey)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		return &transientError{err}
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &transientError{fmt.Errorf("porkbun http %d: %s", resp.StatusCode, string(body))}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	if resp.StatusCode >= http.StatusMultipleChoices {
+		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorResponseBytes))
+		return apiErrorFromHTTP(resp.StatusCode, resp.Header, responseBody)
 	}
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("porkbun http %d: %s", resp.StatusCode, string(body))
+	responseTarget, commitResponse, err := freshResponseTarget(out)
+	if err != nil {
+		return err
 	}
 	dec := json.NewDecoder(resp.Body)
-	if err := dec.Decode(out); err != nil {
-		return fmt.Errorf("decoding response: %w", err)
+	if err := dec.Decode(responseTarget); err != nil {
+		return transientDecodeError(ctx, err)
 	}
+	// A second decode must reach a clean EOF. This catches a transport read
+	// failure after the first JSON value and rejects unexpected trailing data.
+	var trailing any
+	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = errors.New("multiple JSON values")
+		}
+		return transientDecodeError(ctx, err)
+	}
+	if response, ok := responseTarget.(interface{ responseBase() *baseResponse }); ok {
+		base := response.responseBase()
+		if base.Status != "SUCCESS" {
+			return apiErrorFromResponse(resp.StatusCode, *base, resp.Header)
+		}
+	}
+	commitResponse()
 	return nil
+}
+
+func freshResponseTarget(out any) (any, func(), error) {
+	value := reflect.ValueOf(out)
+	if !value.IsValid() || value.Kind() != reflect.Pointer || value.IsNil() {
+		return nil, nil, errors.New("response target must be a non-nil pointer")
+	}
+	fresh := reflect.New(value.Elem().Type())
+	return fresh.Interface(), func() {
+		value.Elem().Set(fresh.Elem())
+	}, nil
+}
+
+func transientDecodeError(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return &transientError{fmt.Errorf("decoding response: %w", err)}
+}
+
+func apiErrorFromHTTP(status int, header http.Header, body []byte) *APIError {
+	type errorEnvelope struct {
+		Message        string          `json:"message"`
+		Code           json.RawMessage `json:"code"`
+		RequestID      string          `json:"requestId"`
+		RequestIDUpper string          `json:"requestID"`
+		RequestIDSnake string          `json:"request_id"`
+	}
+
+	var envelope errorEnvelope
+	structured := json.Unmarshal(body, &envelope) == nil
+	message := envelope.Message
+	if message == "" {
+		if trimmed := strings.TrimSpace(string(body)); trimmed != "" && !structured {
+			message = trimmed
+		} else {
+			message = http.StatusText(status)
+		}
+	}
+	requestID := firstNonEmpty(envelope.RequestID, envelope.RequestIDUpper, envelope.RequestIDSnake, requestIDFromHeader(header))
+	code := rawJSONText(envelope.Code)
+	retryAfter, _ := retryAfterFromHeader(header, time.Now())
+	return &APIError{
+		HTTPStatus: status,
+		Code:       code,
+		Message:    message,
+		RequestID:  requestID,
+		Retryable:  retryableAPIError(status, code, message),
+		RetryAfter: retryAfter,
+	}
+}
+
+func apiErrorFromResponse(status int, response baseResponse, header http.Header) *APIError {
+	retryAfter, _ := retryAfterFromHeader(header, time.Now())
+	requestID := response.RequestID
+	if requestID == "" {
+		requestID = requestIDFromHeader(header)
+	}
+	return &APIError{
+		HTTPStatus: status,
+		Code:       response.Code,
+		Message:    response.Message,
+		RequestID:  requestID,
+		Retryable:  retryableAPIError(status, response.Code, response.Message),
+		RetryAfter: retryAfter,
+	}
+}
+
+func retryableHTTPStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500
+}
+
+func retryableAPIError(status int, code, message string) bool {
+	if strings.EqualFold(strings.TrimSpace(code), "IDEMPOTENCY_KEY_MISMATCH") {
+		return false
+	}
+	if status == http.StatusConflict {
+		return strings.EqualFold(strings.TrimSpace(code), "IDEMPOTENCY_KEY_IN_USE")
+	}
+	return retryableHTTPStatus(status) || retryablePorkbunError(code, message)
+}
+
+func retryablePorkbunError(code, message string) bool {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if code == "RATE_LIMIT_EXCEEDED" || code == "TOO_MANY_REQUESTS" {
+		return true
+	}
+	message = strings.ToLower(message)
+	return strings.Contains(message, "rate limit") || strings.Contains(message, "too many requests")
+}
+
+func requestIDFromHeader(header http.Header) string {
+	return firstNonEmpty(header.Get("X-Request-ID"), header.Get("Request-ID"))
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func rawJSONText(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+func retryAfterFromHeader(header http.Header, now time.Time) (time.Duration, bool) {
+	if value := strings.TrimSpace(header.Get("Retry-After")); value != "" {
+		if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
+			return durationFromSeconds(seconds)
+		}
+		if retryAt, err := http.ParseTime(value); err == nil {
+			if !retryAt.After(now) {
+				return 0, true
+			}
+			return retryAt.Sub(now), true
+		}
+	}
+
+	if value := strings.TrimSpace(header.Get("X-RateLimit-Reset")); value != "" {
+		reset, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || reset < 0 {
+			return 0, false
+		}
+		// Rate-limit reset headers conventionally contain a Unix timestamp. Also
+		// accept small values as relative seconds for compatible proxies/mocks.
+		if reset < 1_000_000_000 {
+			return durationFromSeconds(reset)
+		}
+		if reset > 100_000_000_000 {
+			reset /= 1000 // tolerate Unix milliseconds
+		}
+		resetAt := time.Unix(reset, 0)
+		if !resetAt.After(now) {
+			return 0, true
+		}
+		return resetAt.Sub(now), true
+	}
+
+	return 0, false
+}
+
+func durationFromSeconds(seconds int64) (time.Duration, bool) {
+	const maxDurationSeconds = int64((1<<63 - 1) / int64(time.Second))
+	if seconds > maxDurationSeconds {
+		return 0, false
+	}
+	return time.Duration(seconds) * time.Second, true
 }
 
 type transientError struct{ err error }
@@ -304,6 +609,10 @@ func (e *transientError) Unwrap() error { return e.err }
 func isRetryable(err error) bool {
 	if err == nil {
 		return false
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Retryable
 	}
 	var te *transientError
 	if errors.As(err, &te) {

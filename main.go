@@ -5,7 +5,7 @@
 //	PORKBUN_API_KEY            (required)  - Porkbun API key
 //	PORKBUN_SECRET_API_KEY     (required)  - Porkbun secret API key
 //	PORKBUN_DOMAIN             (required)  - the apex zone, e.g. "example.com"
-//	WEBHOOK_LISTEN             (default ":8888")  - external-dns webhook server
+//	WEBHOOK_LISTEN             (default "127.0.0.1:8888") - external-dns webhook server
 //	OPS_LISTEN                 (default ":8080")  - healthz/readyz/metrics
 //	DOMAIN_FILTER              (default = PORKBUN_DOMAIN, comma-separated for multiple)
 //	DRY_RUN                    (default false)
@@ -69,15 +69,6 @@ func run() error {
 		return fmt.Errorf("provider init: %w", err)
 	}
 
-	// Optional pre-flight credential check; non-fatal so the readiness probe can do its job.
-	pingCtx, pingCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer pingCancel()
-	if err := prov.Ping(pingCtx); err != nil {
-		log.WithError(err).Warn("pre-flight credential check failed; readiness will reflect this")
-	} else {
-		log.Info("credentials ok")
-	}
-
 	srv := webhook.New(webhook.Config{
 		Provider: prov,
 		Addr:     cfg.WebhookListen,
@@ -111,7 +102,7 @@ type config struct {
 
 func loadConfig() (*config, error) {
 	c := &config{
-		WebhookListen: getenv("WEBHOOK_LISTEN", ":8888"),
+		WebhookListen: getenv("WEBHOOK_LISTEN", "127.0.0.1:8888"),
 		OpsListen:     getenv("OPS_LISTEN", ":8080"),
 		LogLevel:      getenv("LOG_LEVEL", "info"),
 		LogFormat:     getenv("LOG_FORMAT", "text"),
@@ -136,14 +127,31 @@ func loadConfig() (*config, error) {
 		}
 	}
 
-	c.DryRun = boolEnv("DRY_RUN", false)
+	var err error
+	c.DryRun, err = boolEnv("DRY_RUN", false)
+	if err != nil {
+		return nil, err
+	}
 
 	ttlStr := getenv("CACHE_TTL", "1m")
 	d, err := time.ParseDuration(ttlStr)
 	if err != nil {
 		return nil, fmt.Errorf("CACHE_TTL: %w", err)
 	}
+	if d < 0 {
+		return nil, fmt.Errorf("CACHE_TTL must not be negative")
+	}
 	c.CacheTTL = d
+
+	if _, err := log.ParseLevel(c.LogLevel); err != nil {
+		return nil, fmt.Errorf("LOG_LEVEL %q: %w", c.LogLevel, err)
+	}
+	switch strings.ToLower(c.LogFormat) {
+	case "text", "json":
+		c.LogFormat = strings.ToLower(c.LogFormat)
+	default:
+		return nil, fmt.Errorf("LOG_FORMAT must be text or json, got %q", c.LogFormat)
+	}
 	return c, nil
 }
 
@@ -166,13 +174,16 @@ func getenv(k, def string) string {
 	return def
 }
 
-func boolEnv(k string, def bool) bool {
+func boolEnv(k string, def bool) (bool, error) {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv(k)))
+	if v == "" {
+		return def, nil
+	}
 	switch v {
 	case "1", "true", "yes", "on":
-		return true
+		return true, nil
 	case "0", "false", "no", "off":
-		return false
+		return false, nil
 	}
-	return def
+	return false, fmt.Errorf("%s must be a boolean, got %q", k, os.Getenv(k))
 }

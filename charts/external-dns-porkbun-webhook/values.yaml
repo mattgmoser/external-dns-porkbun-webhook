@@ -1,9 +1,14 @@
-## Default values for external-dns-porkbun-webhook.
-## This chart deploys ONLY the webhook (sidecar). The expectation is that you
-## install the upstream external-dns chart with provider.name=webhook and point
-## it at the Service this chart creates.
+## DEPRECATED LEGACY STANDALONE CHART.
 ##
-## See README for the full one-shot pattern.
+## The ExternalDNS webhook protocol has no authentication. This chart exposes
+## its mutating provider API through a ClusterIP Service, so any workload with
+## network access to that Service can ask it to change DNS records. Use the
+## official ExternalDNS chart sidecar configuration in the project README
+## instead; it binds the provider API to 127.0.0.1 inside one Pod.
+
+legacyStandalone:
+  # Required acknowledgement for this deprecated, less-secure topology.
+  acceptRisk: false
 
 image:
   repository: ghcr.io/mattgmoser/external-dns-porkbun-webhook
@@ -35,15 +40,19 @@ cacheTTL: "1m"
 logLevel: info       # debug, info, warn, error
 logFormat: text      # text or json
 
-# Listen ports (rarely changed)
-webhookListen: ":8888"
-opsListen: ":8080"
+# Container listen ports. The legacy webhook listener binds all interfaces so
+# that a different Pod can reach it through the Service.
+containerPorts:
+  webhook: 8888
+  ops: 8080
 
-# Replicas — Porkbun has API rate limits; 1 is usually correct.
+# Replicas — the in-process Porkbun rate limiter is not shared across Pods.
+# Only 0 (paused) or 1 is accepted.
 replicaCount: 1
 
-# Service for external-dns (the upstream chart's webhookProvider config will
-# point at this Service's ClusterIP+port).
+# Legacy Service for a separately configured ExternalDNS Deployment. Pass its
+# address with ExternalDNS's --webhook-provider-url flag. The chart rejects
+# NodePort and LoadBalancer because this API has no authentication.
 service:
   type: ClusterIP
   webhookPort: 8888
@@ -107,6 +116,7 @@ serviceAccount:
   create: true
   name: ""
   annotations: {}
+  automountServiceAccountToken: false
 
 # Extra env vars (rarely needed)
 extraEnv: []

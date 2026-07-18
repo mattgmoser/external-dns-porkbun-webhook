@@ -12,11 +12,13 @@ jobs:
   lint-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
+      - name: go.mod and go.sum are tidy
+        run: go mod tidy -diff
       - name: vet
         run: go vet ./...
       - name: gofmt check
@@ -28,15 +30,19 @@ jobs:
             exit 1
           fi
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: v2.12.2
           args: --timeout=5m
       - name: test
         run: go test -race -coverprofile=coverage.out ./...
+      - name: vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
       - name: coverage
         run: go tool cover -func=coverage.out | tail -5
-      - name: helm lint
-        run: |
-          curl -sL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz | tar xz
-          ./linux-amd64/helm lint charts/external-dns-porkbun-webhook
+      - name: Install Helm
+        uses: azure/setup-helm@v5.0.1
+        with:
+          version: v3.21.3
+      - name: Verify canonical and legacy Helm configurations
+        run: make helm-check
