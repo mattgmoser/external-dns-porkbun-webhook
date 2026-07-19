@@ -232,12 +232,32 @@ func (p *Provider) ApplyChanges(ctx context.Context, changes *plan.Changes) erro
 		}
 	}
 
-	for _, ep := range changes.Create {
+	// ExternalDNS's TXT registry appends ownership records after the records
+	// they protect. Reverse that dependency before writing: if a later main
+	// record create fails, the next reconciliation can observe the ownership
+	// TXT and safely finish the create. Creating the main record first can leave
+	// an unowned record that the registry deliberately will not adopt.
+	for _, ep := range ownershipFirstCreates(changes.Create) {
 		if err := p.createEndpoint(ctx, ep, &idx); err != nil {
 			return fmt.Errorf("create %s/%s: %w", ep.DNSName, ep.RecordType, err)
 		}
 	}
 	return nil
+}
+
+func ownershipFirstCreates(creates []*endpoint.Endpoint) []*endpoint.Endpoint {
+	ordered := make([]*endpoint.Endpoint, 0, len(creates))
+	for _, ep := range creates {
+		if isRegistryOwnershipTXT(ep) {
+			ordered = append(ordered, ep)
+		}
+	}
+	for _, ep := range creates {
+		if !isRegistryOwnershipTXT(ep) {
+			ordered = append(ordered, ep)
+		}
+	}
+	return ordered
 }
 
 // AdjustEndpoints lets a provider tweak desired endpoints before they're stored.

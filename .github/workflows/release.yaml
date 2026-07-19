@@ -83,11 +83,18 @@ jobs:
   build-image:
     runs-on: ubuntu-latest
     needs: verify
+    concurrency:
+      # All semver jobs share one lock because their major/minor/latest tags
+      # overlap. Branch builds retain per-ref cancellation at workflow level.
+      group: ${{ startsWith(github.ref, 'refs/tags/v') && 'release-image-tags' || format('release-image-{0}', github.ref) }}
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -102,26 +109,71 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Determine release channels
+        id: channels
+        shell: bash
+        run: |
+          echo 'publish=false' >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            exit 0
+          fi
+
+          version=${GITHUB_REF_NAME#v}
+          major=${version%%.*}
+          major_minor=$(cut -d. -f1-2 <<<"$version")
+          echo "major=$major" >> "$GITHUB_OUTPUT"
+          echo "major_minor=$major_minor" >> "$GITHUB_OUTPUT"
+
+          # Prereleases receive only their immutable full-version tag.
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            exit 0
+          fi
+
+          git fetch --force --tags origin
+          highest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
+            | sed -nE '/^v[0-9]+\.[0-9]+\.[0-9]+$/p' \
+            | sort -V \
+            | tail -n1)
+          if [[ "$GITHUB_REF_NAME" == "$highest" ]]; then
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check immutable image tag
+        id: exact
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          image="${REGISTRY}/${IMAGE_NAME}"
+          version=${GITHUB_REF_NAME#v}
+          if output=$(docker buildx imagetools inspect "${image}:${version}" 2>&1); then
+            scripts/verify-image.sh "${image}:${version}" "$GITHUB_SHA" "$version"
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+          elif grep -Eqi 'manifest unknown|not found' <<<"$output"; then
+            echo 'exists=false' >> "$GITHUB_OUTPUT"
+          else
+            printf '%s\n' "$output" >&2
+            exit 1
+          fi
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          # metadata-action's auto flavor adds latest only for the stable
-          # semver tag event; main publishes main + sha-* candidate tags.
-          flavor: |
-            latest=auto
+          flavor: latest=false
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ steps.channels.outputs.publish == 'true' }}
+            type=semver,pattern={{major}},enable=${{ steps.channels.outputs.publish == 'true' }}
+            type=raw,value=latest,enable=${{ steps.channels.outputs.publish == 'true' }}
             # A semver event rebuilds the same commit with a release VERSION.
             # Restrict sha-* to branch builds so that candidate tags never move.
             type=sha,prefix=sha-,format=short,enable=${{ github.ref_type == 'branch' }}
 
       - name: Build and push
+        if: steps.exact.outputs.exists != 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -135,6 +187,31 @@ jobs:
             VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Restore current release channels from immutable image
+        if: startsWith(github.ref, 'refs/tags/v') && steps.exact.outputs.exists == 'true' && steps.channels.outputs.publish == 'true'
+        shell: bash
+        run: |
+          image="${REGISTRY}/${IMAGE_NAME}"
+          version=${GITHUB_REF_NAME#v}
+          docker buildx imagetools create \
+            --tag "${image}:${{ steps.channels.outputs.major_minor }}" \
+            --tag "${image}:${{ steps.channels.outputs.major }}" \
+            --tag "${image}:latest" \
+            "${image}:${version}"
+
+      - name: Verify published release image
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          image="${REGISTRY}/${IMAGE_NAME}"
+          version=${GITHUB_REF_NAME#v}
+          scripts/verify-image.sh "${image}:${version}" "$GITHUB_SHA" "$version"
+          if [[ '${{ steps.channels.outputs.publish }}' == 'true' ]]; then
+            scripts/verify-image.sh "${image}:${{ steps.channels.outputs.major_minor }}" "$GITHUB_SHA" "$version"
+            scripts/verify-image.sh "${image}:${{ steps.channels.outputs.major }}" "$GITHUB_SHA" "$version"
+            scripts/verify-image.sh "${image}:latest" "$GITHUB_SHA" "$version"
+          fi
 
   release-chart:
     runs-on: ubuntu-latest
@@ -255,8 +332,71 @@ jobs:
             --owner '${{ github.repository_owner }}' \
             --git-repo '${{ github.event.repository.name }}' \
             --token "$CR_TOKEN" \
+            --commit "$GITHUB_SHA" \
             --package-path .cr-release-packages \
             --skip-existing
+
+      - name: Verify uploaded chart release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          release_tag="external-dns-porkbun-webhook-${version}"
+          package=".cr-release-packages/${release_tag}.tgz"
+          provenance="${package}.prov"
+          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}")"
+
+          test "$(jq -r '.tag_name' <<< "$release_json")" = "$release_tag"
+          test "$(jq -r '.target_commitish' <<< "$release_json")" = "$GITHUB_SHA"
+          test "$(jq -r '.draft' <<< "$release_json")" = 'false'
+          test "$(jq -r '.prerelease' <<< "$release_json")" = 'false'
+
+          if [[ "$(jq '.assets | length' <<< "$release_json")" -ne 2 ]]; then
+            echo 'chart release must contain only its package and provenance assets' >&2
+            exit 1
+          fi
+
+          for asset in "$(basename "$package")" "$(basename "$provenance")"; do
+            count="$(jq --arg name "$asset" '[.assets[] | select(.name == $name)] | length' <<< "$release_json")"
+            if [ "$count" -ne 1 ]; then
+              echo "release must contain exactly one $asset asset" >&2
+              exit 1
+            fi
+          done
+
+          download_dir=.cr-verified-packages
+          mkdir "$download_dir"
+          gh release download "$release_tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$(basename "$package")" \
+            --pattern "$(basename "$provenance")" \
+            --dir "$download_dir"
+
+          remote_package="$download_dir/$(basename "$package")"
+          public_keyring="$RUNNER_TEMP/chart-signing-public.gpg"
+          gpg --batch --export '1CD080E5799F3F24960E791966B9EDBB9FE0C877' > "$public_keyring"
+          helm verify --keyring "$public_keyring" "$remote_package"
+
+          # Helm archive headers and signatures are intentionally
+          # nondeterministic. Compare the unpacked chart (including the
+          # unpacked dependency) so a safe retry accepts identical content
+          # without pretending regenerated package bytes are immutable.
+          normalize_chart() {
+            source_package=$1
+            destination=$2
+            mkdir "$destination"
+            tar xzf "$source_package" -C "$destination"
+            while IFS= read -r -d '' dependency; do
+              dependency_dir="${dependency}.contents"
+              mkdir "$dependency_dir"
+              tar xzf "$dependency" -C "$dependency_dir"
+              rm "$dependency"
+            done < <(find "$destination" -type f -name '*.tgz' -print0)
+          }
+          compare_parent=$(mktemp -d)
+          normalize_chart "$package" "$compare_parent/local"
+          normalize_chart "$remote_package" "$compare_parent/remote"
+          diff -ruN "$compare_parent/local" "$compare_parent/remote"
 
       # Artifact Hub reads repository metadata and the landing page from the
       # chart repository root, beside index.yaml (not from inside a chart).
@@ -282,11 +422,13 @@ jobs:
           CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p .cr-index
+          # Index the immutable bytes downloaded from the GitHub release,
+          # not the newly regenerated package from this workflow attempt.
           cr index \
             --owner '${{ github.repository_owner }}' \
             --git-repo '${{ github.event.repository.name }}' \
             --token "$CR_TOKEN" \
-            --package-path .cr-release-packages \
+            --package-path .cr-verified-packages \
             --index-path .cr-index/index.yaml \
             --pages-branch gh-pages \
             --push

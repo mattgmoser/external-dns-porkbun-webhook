@@ -1,0 +1,15 @@
+{{- $stateName := printf "%s-porkbun-migration-state" .Release.Name | trunc 63 | trimSuffix "-" -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $stateName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: external-dns-porkbun-webhook
+  annotations:
+    meta.helm.sh/release-name: {{ .Release.Name }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace }}
+data:
+  topology: official-external-dns-same-pod-sidecar

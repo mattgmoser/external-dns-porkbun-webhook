@@ -40,7 +40,12 @@ Edit every example value in `external-dns-porkbun-values.yaml`, especially:
 - the credential Secret name;
 - `PORKBUN_DOMAIN`, `DOMAIN_FILTER`, and `domainFilters`;
 - `txtOwnerId`, which must be stable and unique per cluster;
-- `txtPrefix`, which must not collide with another ExternalDNS instance.
+- `txtPrefix`, which must not collide with another ExternalDNS instance. Keep
+  the default record-type template and trailing dot for new installations so
+  apex CNAME/ALIAS ownership records stay inside the managed zone;
+- `txt-wildcard-replacement`, whose stable value must not be a real first label
+  in the managed zone. It keeps wildcard ownership TXT names valid. Never
+  change established registry settings without a planned migration.
 
 Then install:
 
@@ -79,14 +84,16 @@ Verify records that rely on those presentation details after reconciliation.
 
 Older charts installed only the webhook and expected a separately managed
 ExternalDNS controller. Do not point the generic install command at that old
-release. First record the controller's `txtOwnerId`, `txtPrefix`, domain
-filters, and policy.
+release. First record the controller's `txtOwnerId`, `txtPrefix`,
+`txt-wildcard-replacement`, domain filters, and policy.
 
 If the old chart created credentials from inline `porkbun.apiKey` values,
-create an independently managed Secret before uninstalling or upgrading it,
-preferably with a rotated key. Either operation removes that chart-owned Secret
-from the release. If it used `porkbun.existingSecret`, verify the Secret remains
-present and is not owned by the legacy Helm release.
+create an independently managed Secret under a different name before
+uninstalling or upgrading it, preferably with a rotated key, and point the new
+values at that name. Reusing the legacy Secret name does not protect it: either
+operation removes that chart-owned Secret from the release. If it used
+`porkbun.existingSecret`, verify the Secret remains present and is not owned by
+the legacy Helm release.
 
 Then choose one path:
 
@@ -98,11 +105,13 @@ Then choose one path:
   old webhook release, then install `0.4.0` with the preserved ownership values
   and independent Secret.
 
-Never overlap writable controllers for the same names. As a final guard,
-`0.4.0` rejects every in-place upgrade unless
+Never overlap writable controllers for the same names. As a final guard, the
+first in-place upgrade from `0.3.0` or earlier is rejected unless
 `migration.acknowledgeControllerReplacement=true` is explicitly set. The
 acknowledgement confirms that you completed the handoff; it does not perform
-the migration.
+the migration. A fresh `0.4.0` install or an acknowledged migration creates a
+release-owned topology marker, so later routine upgrades do not need the
+acknowledgement again.
 
 ## Operations
 

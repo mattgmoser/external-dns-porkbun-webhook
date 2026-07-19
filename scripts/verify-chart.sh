@@ -46,8 +46,10 @@ fi
   -kubernetes-version 1.24.0 < "$rendered_wrapper"
 
 # The wrapper must stay a transparent, version-pinned rendering of the
-# official chart. Helm source comments differ because one chart is a dependency.
-grep -v '^# Source:' "$rendered_wrapper" > "$normalized_wrapper"
+# official chart apart from its release-owned migration marker. Helm source
+# comments also differ because one chart is a dependency.
+sed '/^# Source: external-dns-porkbun-webhook\/templates\/migration-state.yaml$/,/^---$/d' \
+  "$rendered_wrapper" | grep -v '^# Source:' > "$normalized_wrapper"
 grep -v '^# Source:' "$rendered_upstream" > "$normalized_upstream"
 diff -u "$normalized_upstream" "$normalized_wrapper"
 
@@ -62,6 +64,7 @@ require_literal '        - name: external-dns'
 require_literal '        - name: webhook'
 require_literal '              value: 127.0.0.1:8888'
 require_literal '      targetPort: http-webhook'
+require_literal '  topology: official-external-dns-same-pod-sidecar'
 
 if grep -Eq '^[[:space:]]+(port|containerPort):[[:space:]]+8888$' "$rendered_wrapper"; then
   echo 'provider port 8888 must not be exposed by a Service or declared as a public container port' >&2
@@ -159,3 +162,43 @@ for override in "${placeholder_overrides[@]}"; do
     exit 1
   fi
 done
+
+if helm template external-dns "$chart_dir" \
+  --namespace external-dns \
+  --values "$wrapper_values" \
+  --set-string 'external-dns.provider.name=aws' >/dev/null 2>&1; then
+  echo 'the wrapper must reject providers that remove the Porkbun webhook sidecar' >&2
+  exit 1
+fi
+
+# The wrapper's security boundary depends on the mutating webhook remaining on
+# loopback and the Service targeting only the separate ops listener. Reject
+# overrides that would expose mutations or disconnect probes and metrics.
+listener_overrides=(
+  'external-dns.provider.webhook.env[4].value=:8080'
+  'external-dns.provider.webhook.env[4].value=0.0.0.0:8888'
+  'external-dns.provider.webhook.env[5].value=127.0.0.1:8080'
+  'external-dns.extraArgs.webhook-provider-url=http://external-dns-webhook:8888'
+  'external-dns.extraArgs.txt-wildcard-replacement='
+  'external-dns.extraArgs.txt-wildcard-replacement=*'
+  'external-dns.extraArgs.txt-wildcard-replacement=bad.label'
+  'external-dns.extraArgs.txt-wildcard-replacement=-bad'
+)
+for override in "${listener_overrides[@]}"; do
+  if helm template external-dns "$chart_dir" \
+    --namespace external-dns \
+    --values "$wrapper_values" \
+    --set-string "$override" >/dev/null 2>&1; then
+    echo "unsafe listener override must be rejected: $override" >&2
+    exit 1
+  fi
+done
+
+if helm template external-dns "$chart_dir" \
+  --namespace external-dns \
+  --values "$wrapper_values" \
+  --set-string 'external-dns.provider.webhook.env[10].name=WEBHOOK_LISTEN' \
+  --set-string 'external-dns.provider.webhook.env[10].value=127.0.0.1:8888' >/dev/null 2>&1; then
+  echo 'duplicate WEBHOOK_LISTEN entries must be rejected' >&2
+  exit 1
+fi

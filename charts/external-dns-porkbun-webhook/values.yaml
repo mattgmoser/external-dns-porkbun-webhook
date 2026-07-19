@@ -1,13 +1,15 @@
 # This chart wraps the official ExternalDNS chart. Values under `external-dns`
 # are passed directly to that dependency. Replace every example value before
-# installing, and keep txtOwnerId/txtPrefix stable for the lifetime of a zone.
+# installing, and keep txtOwnerId, txtPrefix, and txt-wildcard-replacement
+# stable for the lifetime of a zone.
 
 migration:
   # Chart 0.4.0 changes this package from a webhook-only release into a complete
   # ExternalDNS deployment. Helm templates cannot reliably identify the chart
   # version being replaced, so every in-place upgrade must explicitly confirm
   # that the separately managed controller has been accounted for. New installs
-  # do not need this acknowledgement.
+  # do not need this acknowledgement and create a release-owned migration marker
+  # so their later routine upgrades do not need it either.
   acknowledgeControllerReplacement: false
 
 external-dns:
@@ -93,7 +95,10 @@ external-dns:
   policy: upsert-only
   registry: txt
   txtOwnerId: change-me
-  txtPrefix: external-dns-
+  # The record-type template and trailing dot keep ownership TXT records for an
+  # apex CNAME/ALIAS inside the managed zone. Never change an established
+  # prefix without an explicit registry migration.
+  txtPrefix: external-dns-%{record_type}.
   interval: 1m
   logFormat: json
 
@@ -109,6 +114,9 @@ external-dns:
     webhook-provider-url: http://127.0.0.1:8888
     webhook-provider-read-timeout: 30s
     webhook-provider-write-timeout: 4m30s
+    # Keep this stable and choose a token that cannot be confused with a real
+    # first label. It prevents wildcard ownership TXT names from containing *.
+    txt-wildcard-replacement: _wildcard
 
   podSecurityContext:
     fsGroup: 65532

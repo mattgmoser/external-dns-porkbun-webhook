@@ -1,14 +1,28 @@
 {{- $externalDNS := index .Values "external-dns" | default dict -}}
 {{- $provider := index $externalDNS "provider" | default dict -}}
+{{- $providerName := index $provider "name" | default "" | trim -}}
+{{- if ne $providerName "webhook" -}}
+{{- fail "external-dns.provider.name must remain webhook; changing it removes the Porkbun sidecar from this chart" -}}
+{{- end -}}
 {{- $webhook := index $provider "webhook" | default dict -}}
 {{- $env := index $webhook "env" | default list -}}
 {{- $porkbunDomain := "" -}}
 {{- $webhookDomainFilter := "" -}}
+{{- $webhookListen := "" -}}
+{{- $opsListen := "" -}}
+{{- $webhookListenCount := 0 -}}
+{{- $opsListenCount := 0 -}}
 {{- range $entry := $env -}}
   {{- if eq ($entry.name | default "") "PORKBUN_DOMAIN" -}}
     {{- $porkbunDomain = $entry.value | default "" -}}
   {{- else if eq ($entry.name | default "") "DOMAIN_FILTER" -}}
     {{- $webhookDomainFilter = $entry.value | default "" -}}
+  {{- else if eq ($entry.name | default "") "WEBHOOK_LISTEN" -}}
+    {{- $webhookListen = $entry.value | default "" | trim -}}
+    {{- $webhookListenCount = add1 $webhookListenCount -}}
+  {{- else if eq ($entry.name | default "") "OPS_LISTEN" -}}
+    {{- $opsListen = $entry.value | default "" | trim -}}
+    {{- $opsListenCount = add1 $opsListenCount -}}
   {{- end -}}
 {{- end -}}
 {{- $porkbunDomain = trimSuffix "." (lower (trim $porkbunDomain)) -}}
@@ -18,6 +32,21 @@
 {{- end -}}
 {{- if or (empty $webhookDomainFilter) (eq $webhookDomainFilter "example.com") -}}
 {{- fail "set external-dns.provider.webhook.env DOMAIN_FILTER to the intended webhook scope; the example value is not installable" -}}
+{{- end -}}
+{{- if or (ne $webhookListenCount 1) (ne $webhookListen "127.0.0.1:8888") -}}
+{{- fail "external-dns.provider.webhook.env must contain exactly one WEBHOOK_LISTEN=127.0.0.1:8888; the unauthenticated mutation endpoint must remain loopback-only" -}}
+{{- end -}}
+{{- if or (ne $opsListenCount 1) (ne $opsListen ":8080") -}}
+{{- fail "external-dns.provider.webhook.env must contain exactly one OPS_LISTEN=:8080 so the Service exposes only health and metrics" -}}
+{{- end -}}
+{{- $extraArgs := index $externalDNS "extraArgs" | default dict -}}
+{{- $providerURL := index $extraArgs "webhook-provider-url" | default "" | trim -}}
+{{- if ne $providerURL "http://127.0.0.1:8888" -}}
+{{- fail "external-dns.extraArgs.webhook-provider-url must be http://127.0.0.1:8888 so ExternalDNS reaches only the same-Pod provider listener" -}}
+{{- end -}}
+{{- $wildcardReplacement := index $extraArgs "txt-wildcard-replacement" | default "" | trim -}}
+{{- if not (regexMatch "^([A-Za-z0-9_]|[A-Za-z0-9_][A-Za-z0-9_-]{0,61}[A-Za-z0-9_])$" $wildcardReplacement) -}}
+{{- fail "external-dns.extraArgs.txt-wildcard-replacement must be one valid 1-63 character DNS label so wildcard ownership TXT records remain valid" -}}
 {{- end -}}
 {{- $domainFilters := index $externalDNS "domainFilters" | default list -}}
 {{- if empty $domainFilters -}}

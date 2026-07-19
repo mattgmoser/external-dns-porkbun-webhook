@@ -31,6 +31,7 @@ type fakePorkbun struct {
 	nextID         atomic.Int64
 	calls          atomic.Int32
 	failCreate     atomic.Bool
+	failCreateType atomic.Value
 	beforeRetrieve func()
 	afterDelete    func()
 }
@@ -97,14 +98,15 @@ func (f *fakePorkbun) handleRetrieve(w http.ResponseWriter) {
 }
 
 func (f *fakePorkbun) handleCreate(w http.ResponseWriter, r *http.Request) {
-	if f.failCreate.Load() {
-		json.NewEncoder(w).Encode(map[string]string{"status": "ERROR", "message": "forced create failure"})
-		return
-	}
 	var body struct {
 		Name, Type, Content, TTL, Prio string
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	failType, _ := f.failCreateType.Load().(string)
+	if f.failCreate.Load() || failType == body.Type {
+		json.NewEncoder(w).Encode(map[string]string{"status": "ERROR", "message": "forced create failure"})
+		return
+	}
 	f.mu.Lock()
 	id := f.nextID.Add(1)
 	rec := porkbun.Record{
@@ -596,6 +598,34 @@ func TestAdjustEndpointsCanonicalizesBeforeV021Planner(t *testing.T) {
 	}
 }
 
+func TestCNAMERejectsMultipleDistinctTargetsBeforeWrites(t *testing.T) {
+	fake := newFakePorkbun()
+	prov := newTestProvider(t, fake)
+
+	desired := &endpoint.Endpoint{
+		DNSName: "multi.example.com", RecordType: endpoint.RecordTypeCNAME,
+		Targets: []string{"one.example.net", "two.example.net"},
+	}
+	if _, err := prov.AdjustEndpoints([]*endpoint.Endpoint{desired.DeepCopy()}); err == nil {
+		t.Fatal("AdjustEndpoints accepted a multi-target CNAME")
+	}
+
+	err := prov.ApplyChanges(context.Background(), &plan.Changes{Create: []*endpoint.Endpoint{desired.DeepCopy()}})
+	var validationErr *ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("expected ValidationError, got %T: %v", err, err)
+	}
+	if calls := fake.calls.Load(); calls != 0 {
+		t.Fatalf("multi-target CNAME made %d API calls", calls)
+	}
+
+	// Current/delete endpoints remain readable so legacy invalid state can be
+	// repaired instead of making every reconciliation fail validation.
+	if err := prov.validateEndpoint(desired.DeepCopy(), false); err != nil {
+		t.Fatalf("current multi-target CNAME could not be inspected for cleanup: %v", err)
+	}
+}
+
 func TestServiceBindingCanonicalizationIsStrictAndLossless(t *testing.T) {
 	valid := map[string]string{
 		`1 . key65400="alpha  beta"`:                      `1 . key65400="alpha\ \ beta"`,
@@ -802,6 +832,9 @@ func TestApplyChangesPrevalidatesEntireBatchWithoutAPICalls(t *testing.T) {
 		},
 		"invalid MX": {
 			Create: []*endpoint.Endpoint{{DNSName: "x.example.com", RecordType: "MX", Targets: []string{"mail.example.com"}}},
+		},
+		"multi-target CNAME": {
+			Create: []*endpoint.Endpoint{{DNSName: "x.example.com", RecordType: "CNAME", Targets: []string{"one.example.net", "two.example.net"}}},
 		},
 		"no targets": {
 			Create: []*endpoint.Endpoint{{DNSName: "x.example.com", RecordType: "TXT"}},
