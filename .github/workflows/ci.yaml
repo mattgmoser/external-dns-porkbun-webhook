@@ -38,6 +38,16 @@ jobs:
         run: go test -race -coverprofile=coverage.out ./...
       - name: vulnerability scan
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+      # govulncheck reports reachable call paths. This complementary binary
+      # scan catches actionable package-presence findings before a release tag
+      # consumes an immutable image version.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.72.0
+          cache: true
+      - name: Scan compiled webhook binary
+        run: scripts/verify-binary-vulnerabilities.sh "$RUNNER_TEMP/trivy-binary.json"
       - name: coverage
         run: go tool cover -func=coverage.out | tail -5
       - name: Install Helm
@@ -50,11 +60,14 @@ jobs:
         uses: lycheeverse/lychee-action@v2.9.0
         with:
           # The release-pinned link becomes live when this candidate is tagged.
-          # All other links, including the pinned upstream dependency, are live
-          # and checked on the pull request/main commit.
+          # The dynamic Shields renderer is not the link destination and can
+          # return 503 independently; the Artifact Hub package link remains
+          # live and checked. Every other link, including the pinned upstream
+          # dependency, is checked on the pull request/main commit.
           args: >-
             --no-progress
-            --exclude '^https://github\.com/mattgmoser/external-dns-porkbun-webhook/blob/v0\.4\.0/'
+            --exclude '^https://github\.com/mattgmoser/external-dns-porkbun-webhook/blob/v0\.4\.1/'
+            --exclude '^https://img\.shields\.io/endpoint\?url=https://artifacthub\.io/badge/repository/external-dns-porkbun-webhook$'
             './**/*.md'
             './.github/helm-repository/*.html'
           fail: true
