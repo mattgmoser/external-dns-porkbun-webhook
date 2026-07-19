@@ -52,6 +52,16 @@ jobs:
         run: go test -race ./...
       - name: Vulnerability scan
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+      # Keep package-presence findings from consuming an immutable image
+      # version. The post-push digest scan remains authoritative for the final
+      # runtime image and every published architecture.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.72.0
+          cache: true
+      - name: Scan compiled webhook binary
+        run: scripts/verify-binary-vulnerabilities.sh "$RUNNER_TEMP/trivy-binary.json"
       - name: Install Helm
         uses: azure/setup-helm@v5.0.1
         with:
@@ -87,6 +97,8 @@ jobs:
   build-image:
     runs-on: ubuntu-latest
     needs: verify
+    outputs:
+      image_ref: ${{ steps.verify_image.outputs.image_ref }}
     concurrency:
       # Serialize immutable-tag reconciliation for tagged builds. Mutable
       # channels are promoted only after the chart and index are verified.
@@ -187,18 +199,59 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Verify published release image
+        id: verify_image
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: |
           image="${REGISTRY}/${IMAGE_NAME}"
           version=${GITHUB_REF_NAME#v}
           source="https://github.com/${GITHUB_REPOSITORY}"
-          scripts/verify-image.sh "${image}:${version}" "$GITHUB_SHA" "$version" "$source" >/dev/null
+          digest="$(scripts/verify-image.sh "${image}:${version}" "$GITHUB_SHA" "$version" "$source")"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Published image returned an invalid digest: $digest" >&2
+            exit 1
+          fi
+          echo "image_ref=${image}@${digest}" >> "$GITHUB_OUTPUT"
+
+  scan-image:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-image
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Login to GHCR for security scanning
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Pin setup-trivy by commit because its tags were rewritten during
+      # GHSA-69fq-xp46-6x23. This is the immutable v0.3.1 release.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.72.0
+          cache: true
+      - name: Scan immutable release image
+        env:
+          IMAGE_REF: ${{ needs.build-image.outputs.image_ref }}
+        run: scripts/verify-release-image-vulnerabilities.sh "$IMAGE_REF" trivy-reports
+      - name: Preserve vulnerability reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-${{ github.ref_name }}
+          path: trivy-reports/*.json
+          if-no-files-found: error
+          retention-days: 90
 
   release-chart:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build-image
+    needs: scan-image
     outputs:
       package_digest: ${{ steps.verify_upload.outputs.package_digest }}
       package_url: ${{ steps.verify_upload.outputs.package_url }}

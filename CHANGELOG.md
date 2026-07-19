@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.1
+
+### Security and distribution
+
+- Upgrade `golang.org/x/net` to `v0.56.0` for GO-2026-5942 / CVE-2026-46600 and `golang.org/x/text` to `v0.39.0` for GO-2026-5970 / CVE-2026-56852, removing both actionable package-level findings from the `0.4.0` webhook image; `govulncheck` reported no reachable vulnerable call path before the upgrade.
+- Add a pre-publication compiled-binary scan, then scan the immutable release image on `linux/amd64`, `linux/arm64`, and `linux/arm/v7` with pinned Trivy `v0.72.0`; report every finding, retain the JSON reports, and block chart publication and mutable-channel promotion for any vulnerability with an available fix at any severity.
+- Rescan the latest verified immutable webhook image daily so newly disclosed actionable vulnerabilities surface after release.
+- Document that Artifact Hub aggregates the webhook image with the official ExternalDNS runtime image when calculating the chart's security grade, while keeping both images and all residual upstream findings visible.
+
 ## 0.4.0
 
 ### Helm and security

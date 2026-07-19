@@ -1,0 +1,138 @@
+name: security
+
+on:
+  schedule:
+    - cron: '17 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: security-current-release
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  scan-current-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Login to GHCR for security scanning
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve and verify the latest stable release image
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          if ! remote_chart_tags="$(git ls-remote --exit-code --tags --refs origin 'refs/tags/external-dns-porkbun-webhook-*')"; then
+            echo 'Unable to enumerate published chart tags on origin' >&2
+            exit 1
+          fi
+          version="$({
+            awk '{ print $2 }' <<< "$remote_chart_tags" \
+              | while IFS= read -r ref; do
+                  candidate="${ref#refs/tags/external-dns-porkbun-webhook-}"
+                  if [[ "$candidate" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+                    printf '%s\n' "$candidate"
+                  fi
+                done \
+              | sort -V \
+              | tail -n1
+          })"
+          if [[ -z "$version" ]]; then
+            echo 'Origin has no stable chart release tags' >&2
+            exit 1
+          fi
+
+          release_tag="external-dns-porkbun-webhook-${version}"
+          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}")"
+          if [[ "$(jq -r '.tag_name' <<< "$release_json")" != "$release_tag" ]]; then
+            echo "GitHub returned an unexpected release for $release_tag" >&2
+            exit 1
+          fi
+          release_commit="$(jq -r '.target_commitish' <<< "$release_json")"
+          if [[ ! "$release_commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "$release_tag does not target an exact commit: $release_commit" >&2
+            exit 1
+          fi
+
+          chart_ref="refs/tags/${release_tag}"
+          if ! chart_refs="$(git ls-remote --exit-code origin "$chart_ref" "${chart_ref}^{}")"; then
+            echo "Chart tag $chart_ref does not exist on origin" >&2
+            exit 1
+          fi
+          chart_object="$(awk -v ref="$chart_ref" '$2 == ref { print $1 }' <<< "$chart_refs")"
+          chart_commit="$(awk -v ref="${chart_ref}^{}" '$2 == ref { print $1 }' <<< "$chart_refs")"
+          if [[ -z "$chart_object" ]]; then
+            echo "Origin did not return the exact chart tag $chart_ref" >&2
+            exit 1
+          fi
+          if [[ -z "$chart_commit" ]]; then
+            chart_commit="$chart_object"
+          fi
+          if [[ "$chart_commit" != "$release_commit" ]]; then
+            echo "$chart_ref resolves to $chart_commit, not release commit $release_commit" >&2
+            exit 1
+          fi
+
+          source_ref="refs/tags/v${version}"
+          if ! source_refs="$(git ls-remote --exit-code origin "$source_ref" "${source_ref}^{}")"; then
+            echo "Source tag $source_ref does not exist on origin" >&2
+            exit 1
+          fi
+          tag_object="$(awk -v ref="$source_ref" '$2 == ref { print $1 }' <<< "$source_refs")"
+          source_commit="$(awk -v ref="${source_ref}^{}" '$2 == ref { print $1 }' <<< "$source_refs")"
+          if [[ -z "$tag_object" ]]; then
+            echo "Origin did not return the exact source tag $source_ref" >&2
+            exit 1
+          fi
+          if [[ -z "$source_commit" ]]; then
+            source_commit="$tag_object"
+          fi
+          if [[ "$source_commit" != "$chart_commit" ]]; then
+            echo "$source_ref resolves to $source_commit, not chart tag commit $chart_commit" >&2
+            exit 1
+          fi
+
+          image="${REGISTRY}/${IMAGE_NAME}"
+          source="https://github.com/${GITHUB_REPOSITORY}"
+          digest="$(scripts/verify-image.sh "${image}:${version}" "$source_commit" "$version" "$source")"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Published image returned an invalid digest: $digest" >&2
+            exit 1
+          fi
+          echo "image_ref=${image}@${digest}" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # Pin setup-trivy by commit because its tags were rewritten during
+      # GHSA-69fq-xp46-6x23. This is the immutable v0.3.1 release.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.72.0
+          cache: true
+      - name: Scan latest immutable release image
+        env:
+          IMAGE_REF: ${{ steps.release.outputs.image_ref }}
+        run: scripts/verify-release-image-vulnerabilities.sh "$IMAGE_REF" trivy-reports
+      - name: Preserve vulnerability reports
+        if: always() && steps.release.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-current-v${{ steps.release.outputs.version }}
+          path: trivy-reports/*.json
+          if-no-files-found: error
+          retention-days: 90

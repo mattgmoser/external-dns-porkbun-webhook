@@ -48,7 +48,7 @@ Add the repository and export the chart's version-pinned values:
 helm repo add edns-porkbun https://mattgmoser.github.io/external-dns-porkbun-webhook
 helm repo update
 helm show values edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.4.0 > external-dns-porkbun-values.yaml
+  --version 0.4.1 > external-dns-porkbun-values.yaml
 ```
 
 Change all of these in `external-dns-porkbun-values.yaml` before installing:
@@ -64,7 +64,7 @@ Never change `txtOwnerId`, `txtPrefix`, or `txt-wildcard-replacement` casually a
 ```sh
 helm upgrade --install external-dns \
   edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.4.0 \
+  --version 0.4.1 \
   --namespace external-dns \
   --values external-dns-porkbun-values.yaml
 ```
@@ -94,9 +94,9 @@ Do not use the generic install command above to migrate an existing standalone-c
 Choose one controller path:
 
 - If ExternalDNS is already managed directly with the official chart, keep that release. Add this project's version-pinned [`docs/external-dns-values.yaml`](docs/external-dns-values.yaml) sidecar settings to it, roll out the same-Pod configuration, and then remove the old standalone webhook release.
-- To adopt this wrapper, stop and remove the separately managed ExternalDNS controller and the old standalone webhook release, then install `0.4.0` with the preserved ownership settings and independent credential Secret. Never overlap two writable controllers for the same names.
+- To adopt this wrapper, stop and remove the separately managed ExternalDNS controller and the old standalone webhook release, then install `0.4.1` with the preserved ownership settings and independent credential Secret. Never overlap two writable controllers for the same names.
 
-As a final guard, the first in-place Helm upgrade from `0.3.0` or earlier is rejected unless `migration.acknowledgeControllerReplacement=true` is explicitly set. That acknowledgement only confirms that you completed the controller handoff; it does not perform the migration. A fresh `0.4.0` install or an acknowledged migration creates a release-owned topology marker, so later routine upgrades of that release do not need the acknowledgement again.
+As a final guard, the first in-place Helm upgrade from `0.3.0` or earlier is rejected unless `migration.acknowledgeControllerReplacement=true` is explicitly set. That acknowledgement only confirms that you completed the controller handoff; it does not perform the migration. A fresh `0.4.0` or later install, or an acknowledged migration, creates a release-owned topology marker, so later routine upgrades of that release do not need the acknowledgement again.
 
 ## Configuration
 
@@ -179,6 +179,23 @@ make docker           # multi-arch buildx push
 ```
 
 Tests use an in-memory mock of the Porkbun API; they don't need real credentials.
+
+### Container vulnerability reports
+
+The release workflow scans the webhook image by immutable digest on every
+published architecture. It reports all Trivy findings and rejects any finding
+with an available fix, at any severity. The pre-publication binary scan
+prevents known findings from consuming an image version; the final digest scan
+blocks chart publication and mutable-channel promotion. The latest immutable
+release is rescanned daily so newly disclosed findings are not missed. This
+project does not maintain a Trivy ignore list.
+
+Artifact Hub calculates the chart's security grade from both runtime images
+declared by the chart. In its security report, findings under
+`ghcr.io/mattgmoser/external-dns-porkbun-webhook` belong to this project, while
+findings under `registry.k8s.io/external-dns/external-dns` belong to the pinned
+official ExternalDNS dependency. Both remain visible, and the upstream image is
+updated when a tested supported release becomes available.
 
 To run the webhook locally against a real Porkbun zone:
 

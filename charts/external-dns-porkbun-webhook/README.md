@@ -32,7 +32,7 @@ kubectl -n external-dns create secret generic porkbun-creds \
 helm repo add edns-porkbun https://mattgmoser.github.io/external-dns-porkbun-webhook
 helm repo update
 helm show values edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.4.0 > external-dns-porkbun-values.yaml
+  --version 0.4.1 > external-dns-porkbun-values.yaml
 ```
 
 Edit every example value in `external-dns-porkbun-values.yaml`, especially:
@@ -52,7 +52,7 @@ Then install:
 ```sh
 helm upgrade --install external-dns \
   edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.4.0 \
+  --version 0.4.1 \
   --namespace external-dns \
   --values external-dns-porkbun-values.yaml
 ```
@@ -63,7 +63,7 @@ choosing `sync`, which also deletes records no longer desired by Kubernetes.
 ## Values
 
 All provider and controller settings are nested under `external-dns` and are
-passed to the upstream chart. Use `helm show values ... --version 0.4.0` as
+passed to the upstream chart. Use `helm show values ... --version 0.4.1` as
 shown above for this chart's immutable defaults. The dependency's exact
 [`external-dns` values](https://github.com/kubernetes-sigs/external-dns/blob/external-dns-helm-chart-1.21.1/charts/external-dns/values.yaml)
 are also version-pinned.
@@ -99,19 +99,36 @@ Then choose one path:
 
 - Keep an ExternalDNS release already managed through the official chart, add
   this project's
-  [version-pinned sidecar values](https://github.com/mattgmoser/external-dns-porkbun-webhook/blob/v0.4.0/docs/external-dns-values.yaml),
+  [version-pinned sidecar values](https://github.com/mattgmoser/external-dns-porkbun-webhook/blob/v0.4.1/docs/external-dns-values.yaml),
   roll it out, and remove the old standalone webhook release.
 - To adopt this wrapper, stop and remove the separately managed controller and
-  old webhook release, then install `0.4.0` with the preserved ownership values
+  old webhook release, then install `0.4.1` with the preserved ownership values
   and independent Secret.
 
 Never overlap writable controllers for the same names. As a final guard, the
 first in-place upgrade from `0.3.0` or earlier is rejected unless
 `migration.acknowledgeControllerReplacement=true` is explicitly set. The
 acknowledgement confirms that you completed the handoff; it does not perform
-the migration. A fresh `0.4.0` install or an acknowledged migration creates a
-release-owned topology marker, so later routine upgrades do not need the
-acknowledgement again.
+the migration. A fresh `0.4.0` or later install, or an acknowledged migration,
+creates a release-owned topology marker, so later routine upgrades do not need
+the acknowledgement again.
+
+## Security report scope
+
+Artifact Hub calculates this chart's security grade from both declared runtime
+images. Expand the report targets to distinguish this project's
+`ghcr.io/mattgmoser/external-dns-porkbun-webhook` image from the official
+`registry.k8s.io/external-dns/external-dns` dependency.
+
+The release workflow scans the webhook image by immutable digest on every
+published architecture. It reports all Trivy findings and rejects any finding
+with an available fix, at any severity. The pre-publication binary scan
+prevents known findings from consuming an image version; the final digest scan
+blocks chart publication and mutable-channel promotion. The latest immutable
+release is rescanned daily so newly disclosed findings are not missed. There is
+no Trivy ignore list. Findings in the official ExternalDNS image remain visible
+and are addressed by updating the pinned chart and image after a tested
+supported release becomes available.
 
 ## Operations
 

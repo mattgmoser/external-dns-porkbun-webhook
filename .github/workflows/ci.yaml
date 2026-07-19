@@ -38,6 +38,16 @@ jobs:
         run: go test -race -coverprofile=coverage.out ./...
       - name: vulnerability scan
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+      # govulncheck reports reachable call paths. This complementary binary
+      # scan catches actionable package-presence findings before a release tag
+      # consumes an immutable image version.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.72.0
+          cache: true
+      - name: Scan compiled webhook binary
+        run: scripts/verify-binary-vulnerabilities.sh "$RUNNER_TEMP/trivy-binary.json"
       - name: coverage
         run: go tool cover -func=coverage.out | tail -5
       - name: Install Helm
@@ -54,7 +64,7 @@ jobs:
           # and checked on the pull request/main commit.
           args: >-
             --no-progress
-            --exclude '^https://github\.com/mattgmoser/external-dns-porkbun-webhook/blob/v0\.4\.0/'
+            --exclude '^https://github\.com/mattgmoser/external-dns-porkbun-webhook/blob/v0\.4\.1/'
             './**/*.md'
             './.github/helm-repository/*.html'
           fail: true

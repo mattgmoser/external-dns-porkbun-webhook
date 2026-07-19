@@ -2,8 +2,8 @@ apiVersion: v2
 name: external-dns-porkbun-webhook
 description: ExternalDNS with the Porkbun webhook installed as a secure same-Pod sidecar
 type: application
-version: 0.4.0
-appVersion: "0.4.0"
+version: 0.4.1
+appVersion: "0.4.1"
 kubeVersion: ">=1.24.0-0"
 keywords:
   - external-dns
@@ -35,25 +35,17 @@ annotations:
       url: https://github.com/mattgmoser/external-dns-porkbun-webhook/issues
   artifacthub.io/containsSecurityUpdates: "true"
   artifacthub.io/changes: |
+    - kind: security
+      description: Updated golang.org/x/net and golang.org/x/text to remove CVE-2026-46600 and CVE-2026-56852 from the webhook image
+    - kind: security
+      description: Added a pre-publication Go binary gate and a final immutable-image gate that reject fixable findings across every published architecture
     - kind: changed
-      description: Replaced the deprecated standalone deployment with the official ExternalDNS 1.21.1 chart and its native webhook sidecar integration
-    - kind: security
-      description: The unauthenticated provider API now binds only to loopback inside the shared ExternalDNS Pod
-    - kind: security
-      description: The webhook sidecar does not receive ExternalDNS's Kubernetes ServiceAccount token
-    - kind: fixed
-      description: Reactivated the package with a supported same-Pod topology and a permanent Artifact Hub link
-    - kind: fixed
-      description: Made ALIAS ownership records compatible with the ExternalDNS v0.21 TXT registry, including apex names
-    - kind: fixed
-      description: Made partial TXT-registry creates, updates, and deletes recoverable without exposing unowned DNS records
-    - kind: fixed
-      description: Added a validated wildcard replacement so ExternalDNS always generates valid wildcard ownership TXT names
+      description: Documented that Artifact Hub's package grade aggregates the webhook image with the official ExternalDNS runtime image
   artifacthub.io/images: |
     - name: external-dns
       image: registry.k8s.io/external-dns/external-dns:v0.21.0
     - name: porkbun-webhook
-      image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:0.4.0
+      image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:0.4.1
       platforms:
         - linux/amd64
         - linux/arm64

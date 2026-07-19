@@ -18,7 +18,7 @@ external-dns:
     webhook:
       image:
         repository: ghcr.io/mattgmoser/external-dns-porkbun-webhook
-        tag: "0.4.0"
+        tag: "0.4.1"
         pullPolicy: IfNotPresent
       env:
         - name: PORKBUN_API_KEY
