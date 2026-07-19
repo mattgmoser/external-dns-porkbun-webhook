@@ -63,6 +63,10 @@ jobs:
         shell: bash
         run: |
           expected="${GITHUB_REF_NAME#v}"
+          if [[ ! "$expected" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo 'release tags must use stable core SemVer (vMAJOR.MINOR.PATCH)' >&2
+            exit 1
+          fi
           chart_version="$(awk '$1 == "version:" {print $2; exit}' charts/external-dns-porkbun-webhook/Chart.yaml)"
           app_version="$(awk '$1 == "appVersion:" {gsub(/\"/, "", $2); print $2; exit}' charts/external-dns-porkbun-webhook/Chart.yaml)"
           example_image_tag="$(awk '$1 == "tag:" {gsub(/\"/, "", $2); print $2; exit}' docs/external-dns-values.yaml)"
@@ -84,8 +88,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: verify
     concurrency:
-      # All semver jobs share one lock because their major/minor/latest tags
-      # overlap. Branch builds retain per-ref cancellation at workflow level.
+      # Serialize immutable-tag reconciliation for tagged builds. Mutable
+      # channels are promoted only after the chart and index are verified.
       group: ${{ startsWith(github.ref, 'refs/tags/v') && 'release-image-tags' || format('release-image-{0}', github.ref) }}
       cancel-in-progress: false
     permissions:
@@ -109,35 +113,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Determine release channels
-        id: channels
-        shell: bash
-        run: |
-          echo 'publish=false' >> "$GITHUB_OUTPUT"
-          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
-            exit 0
-          fi
-
-          version=${GITHUB_REF_NAME#v}
-          major=${version%%.*}
-          major_minor=$(cut -d. -f1-2 <<<"$version")
-          echo "major=$major" >> "$GITHUB_OUTPUT"
-          echo "major_minor=$major_minor" >> "$GITHUB_OUTPUT"
-
-          # Prereleases receive only their immutable full-version tag.
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            exit 0
-          fi
-
-          git fetch --force --tags origin
-          highest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
-            | sed -nE '/^v[0-9]+\.[0-9]+\.[0-9]+$/p' \
-            | sort -V \
-            | tail -n1)
-          if [[ "$GITHUB_REF_NAME" == "$highest" ]]; then
-            echo 'publish=true' >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Check immutable image tag
         id: exact
         if: startsWith(github.ref, 'refs/tags/v')
@@ -145,9 +120,11 @@ jobs:
         run: |
           image="${REGISTRY}/${IMAGE_NAME}"
           version=${GITHUB_REF_NAME#v}
+          source="https://github.com/${GITHUB_REPOSITORY}"
           if output=$(docker buildx imagetools inspect "${image}:${version}" 2>&1); then
-            scripts/verify-image.sh "${image}:${version}" "$GITHUB_SHA" "$version"
+            digest="$(scripts/verify-image.sh "${image}:${version}" "$GITHUB_SHA" "$version" "$source")"
             echo 'exists=true' >> "$GITHUB_OUTPUT"
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
           elif grep -Eqi 'manifest unknown|not found' <<<"$output"; then
             echo 'exists=false' >> "$GITHUB_OUTPUT"
           else
@@ -165,12 +142,33 @@ jobs:
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}},enable=${{ steps.channels.outputs.publish == 'true' }}
-            type=semver,pattern={{major}},enable=${{ steps.channels.outputs.publish == 'true' }}
-            type=raw,value=latest,enable=${{ steps.channels.outputs.publish == 'true' }}
             # A semver event rebuilds the same commit with a release VERSION.
             # Restrict sha-* to branch builds so that candidate tags never move.
             type=sha,prefix=sha-,format=short,enable=${{ github.ref_type == 'branch' }}
+
+      - name: Verify live source tag before image publication
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          source_ref="refs/tags/${GITHUB_REF_NAME}"
+          if ! remote_refs="$(git ls-remote --exit-code origin "$source_ref" "${source_ref}^{}")"; then
+            echo "Source tag ${source_ref} no longer exists on origin" >&2
+            exit 1
+          fi
+
+          tag_object="$(awk -v ref="$source_ref" '$2 == ref { print $1 }' <<< "$remote_refs")"
+          peeled_commit="$(awk -v ref="${source_ref}^{}" '$2 == ref { print $1 }' <<< "$remote_refs")"
+          if [[ -z "$tag_object" ]]; then
+            echo "Origin did not return the exact source tag ${source_ref}" >&2
+            exit 1
+          fi
+          if [[ -z "$peeled_commit" ]]; then
+            peeled_commit="$tag_object"
+          fi
+          if [[ "$peeled_commit" != "$GITHUB_SHA" ]]; then
+            echo "Source tag ${source_ref} resolves to ${peeled_commit}, not ${GITHUB_SHA}" >&2
+            exit 1
+          fi
 
       - name: Build and push
         if: steps.exact.outputs.exists != 'true'
@@ -188,35 +186,24 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Restore current release channels from immutable image
-        if: startsWith(github.ref, 'refs/tags/v') && steps.exact.outputs.exists == 'true' && steps.channels.outputs.publish == 'true'
-        shell: bash
-        run: |
-          image="${REGISTRY}/${IMAGE_NAME}"
-          version=${GITHUB_REF_NAME#v}
-          docker buildx imagetools create \
-            --tag "${image}:${{ steps.channels.outputs.major_minor }}" \
-            --tag "${image}:${{ steps.channels.outputs.major }}" \
-            --tag "${image}:latest" \
-            "${image}:${version}"
-
       - name: Verify published release image
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: |
           image="${REGISTRY}/${IMAGE_NAME}"
           version=${GITHUB_REF_NAME#v}
-          scripts/verify-image.sh "${image}:${version}" "$GITHUB_SHA" "$version"
-          if [[ '${{ steps.channels.outputs.publish }}' == 'true' ]]; then
-            scripts/verify-image.sh "${image}:${{ steps.channels.outputs.major_minor }}" "$GITHUB_SHA" "$version"
-            scripts/verify-image.sh "${image}:${{ steps.channels.outputs.major }}" "$GITHUB_SHA" "$version"
-            scripts/verify-image.sh "${image}:latest" "$GITHUB_SHA" "$version"
-          fi
+          source="https://github.com/${GITHUB_REPOSITORY}"
+          scripts/verify-image.sh "${image}:${version}" "$GITHUB_SHA" "$version" "$source" >/dev/null
 
   release-chart:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build-image
+    outputs:
+      package_digest: ${{ steps.verify_upload.outputs.package_digest }}
+      package_url: ${{ steps.verify_upload.outputs.package_url }}
+      provenance_digest: ${{ steps.verify_upload.outputs.provenance_digest }}
+      provenance_url: ${{ steps.verify_upload.outputs.provenance_url }}
     concurrency:
       group: release-chart
       cancel-in-progress: false
@@ -231,6 +218,29 @@ jobs:
         run: |
           git config user.name "$GITHUB_ACTOR"
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Verify live source tag before chart publication
+        shell: bash
+        run: |
+          source_ref="refs/tags/${GITHUB_REF_NAME}"
+          if ! remote_refs="$(git ls-remote --exit-code origin "$source_ref" "${source_ref}^{}")"; then
+            echo "Source tag ${source_ref} no longer exists on origin" >&2
+            exit 1
+          fi
+
+          tag_object="$(awk -v ref="$source_ref" '$2 == ref { print $1 }' <<< "$remote_refs")"
+          peeled_commit="$(awk -v ref="${source_ref}^{}" '$2 == ref { print $1 }' <<< "$remote_refs")"
+          if [[ -z "$tag_object" ]]; then
+            echo "Origin did not return the exact source tag ${source_ref}" >&2
+            exit 1
+          fi
+          if [[ -z "$peeled_commit" ]]; then
+            peeled_commit="$tag_object"
+          fi
+          if [[ "$peeled_commit" != "$GITHUB_SHA" ]]; then
+            echo "Source tag ${source_ref} resolves to ${peeled_commit}, not ${GITHUB_SHA}" >&2
+            exit 1
+          fi
 
       - name: Install Helm
         uses: azure/setup-helm@v5.0.1
@@ -268,11 +278,40 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         run: |
+          expected_fingerprint='1CD080E5799F3F24960E791966B9EDBB9FE0C877'
+          checked_in_key='charts/external-dns-porkbun-webhook/keys/66B9EDBB9FE0C877.asc'
+          checked_in_fingerprint="$(
+            gpg --batch --show-keys --with-colons "$checked_in_key" \
+              | awk -F: '$1 == "pub" { primary = 1; next } primary && $1 == "fpr" { print $10; exit }'
+          )"
+          if [[ "$checked_in_fingerprint" != "$expected_fingerprint" ]]; then
+            echo 'checked-in chart signing key has an unexpected primary fingerprint' >&2
+            exit 1
+          fi
+
           printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          secret_fingerprint="$(
+            gpg --batch --with-colons --list-secret-keys "$expected_fingerprint" \
+              | awk -F: '$1 == "sec" { primary = 1; next } primary && $1 == "fpr" { print $10; exit }'
+          )"
+          if [[ "$secret_fingerprint" != "$expected_fingerprint" ]]; then
+            echo 'GPG_PRIVATE_KEY does not contain the expected chart signing key' >&2
+            exit 1
+          fi
+
           # Helm package --sign needs the legacy secring.gpg format. Modern GPG
           # (2.x) doesn't write it by default; re-export the secret keys to
-          # produce one helm can read.
-          gpg --export-secret-keys > "$HOME/.gnupg/secring.gpg"
+          # produce one Helm can read. Export only the identity anchored by the
+          # public key committed to this repository.
+          gpg --batch --export-secret-keys "$expected_fingerprint" > "$HOME/.gnupg/secring.gpg"
+          test -s "$HOME/.gnupg/secring.gpg"
+
+          public_key_home="$(mktemp -d)"
+          chmod 700 "$public_key_home"
+          GNUPGHOME="$public_key_home" gpg --batch --import "$checked_in_key"
+          GNUPGHOME="$public_key_home" gpg --batch --export "$expected_fingerprint" \
+            > "$RUNNER_TEMP/chart-signing-public.gpg"
+          test -s "$RUNNER_TEMP/chart-signing-public.gpg"
 
       - name: Package chart with signature
         run: |
@@ -291,7 +330,7 @@ jobs:
         run: |
           package=".cr-release-packages/external-dns-porkbun-webhook-${GITHUB_REF_NAME#v}.tgz"
           public_keyring="$RUNNER_TEMP/chart-signing-public.gpg"
-          gpg --batch --export '1CD080E5799F3F24960E791966B9EDBB9FE0C877' > "$public_keyring"
+          test -s "$public_keyring"
           helm verify --keyring "$public_keyring" "$package"
           archive_listing="$(tar tzf "$package")"
           dependency_chart='external-dns-porkbun-webhook/charts/external-dns/Chart.yaml'
@@ -324,19 +363,174 @@ jobs:
           sudo install cr /usr/local/bin/cr
           cr version
 
+      - name: Reconcile an interrupted chart release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          verify_source_tag() {
+            source_ref="refs/tags/${GITHUB_REF_NAME}"
+            if ! source_refs="$(git ls-remote --exit-code origin "$source_ref" "${source_ref}^{}")"; then
+              echo "Source tag ${source_ref} no longer exists on origin" >&2
+              return 1
+            fi
+            tag_object="$(awk -v ref="$source_ref" '$2 == ref { print $1 }' <<< "$source_refs")"
+            source_commit="$(awk -v ref="${source_ref}^{}" '$2 == ref { print $1 }' <<< "$source_refs")"
+            if [[ -z "$tag_object" ]]; then
+              echo "Origin did not return the exact source tag ${source_ref}" >&2
+              return 1
+            fi
+            if [[ -z "$source_commit" ]]; then
+              source_commit="$tag_object"
+            fi
+            if [[ "$source_commit" != "$GITHUB_SHA" ]]; then
+              echo "Source tag ${source_ref} resolves to ${source_commit}, not ${GITHUB_SHA}" >&2
+              return 1
+            fi
+          }
+
+          verify_source_tag
+          version="${GITHUB_REF_NAME#v}"
+          release_tag="external-dns-porkbun-webhook-${version}"
+          package_name="${release_tag}.tgz"
+          provenance_name="${package_name}.prov"
+          release_json="$RUNNER_TEMP/existing-chart-release.json"
+
+          status="$(
+            curl --silent --show-error \
+              --output "$release_json" \
+              --write-out '%{http_code}' \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}"
+          )"
+          if [[ "$status" == '404' ]]; then
+            chart_ref="refs/tags/${release_tag}"
+            if chart_refs="$(git ls-remote --exit-code origin "$chart_ref" "${chart_ref}^{}")"; then
+              tag_object="$(awk -v ref="$chart_ref" '$2 == ref { print $1 }' <<< "$chart_refs")"
+              peeled_commit="$(awk -v ref="${chart_ref}^{}" '$2 == ref { print $1 }' <<< "$chart_refs")"
+              if [[ -z "$tag_object" ]]; then
+                echo "Origin did not return the exact chart tag ${chart_ref}" >&2
+                exit 1
+              fi
+              if [[ -z "$peeled_commit" ]]; then
+                peeled_commit="$tag_object"
+              fi
+              if [[ "$peeled_commit" != "$GITHUB_SHA" ]]; then
+                echo "Chart tag ${chart_ref} resolves to ${peeled_commit}, not ${GITHUB_SHA}" >&2
+                exit 1
+              fi
+              echo "No existing chart release; validated existing tag ${chart_ref}"
+            else
+              ls_remote_status=$?
+              if [[ "$ls_remote_status" -ne 2 ]]; then
+                echo "Unable to determine whether chart tag ${chart_ref} exists on origin" >&2
+                exit 1
+              fi
+              echo 'No existing chart release or chart tag to reconcile'
+            fi
+            exit 0
+          fi
+          if [[ "$status" != '200' ]]; then
+            echo "GitHub returned HTTP $status while checking ${release_tag}" >&2
+            jq -r '.message // empty' "$release_json" >&2 || true
+            exit 1
+          fi
+
+          if ! jq -e \
+            --arg tag "$release_tag" \
+            --arg commit "$GITHUB_SHA" \
+            '.tag_name == $tag
+             and .target_commitish == $commit
+             and .draft == false
+             and .prerelease == false' \
+            "$release_json" >/dev/null; then
+            echo "Existing release ${release_tag} does not match this stable release attempt" >&2
+            exit 1
+          fi
+
+          git fetch --force origin \
+            "+refs/tags/${release_tag}:refs/tags/${release_tag}"
+          if [[ "$(git rev-list -n 1 "refs/tags/${release_tag}")" != "$GITHUB_SHA" ]]; then
+            echo "Existing tag ${release_tag} does not resolve to ${GITHUB_SHA}" >&2
+            exit 1
+          fi
+
+          unexpected_assets="$(
+            jq \
+              --arg package "$package_name" \
+              --arg provenance "$provenance_name" \
+              '[.assets[] | select(.name != $package and .name != $provenance)] | length' \
+              "$release_json"
+          )"
+          package_count="$(jq --arg name "$package_name" '[.assets[] | select(.name == $name)] | length' "$release_json")"
+          provenance_count="$(jq --arg name "$provenance_name" '[.assets[] | select(.name == $name)] | length' "$release_json")"
+          asset_count="$(jq '.assets | length' "$release_json")"
+
+          if (( unexpected_assets != 0 || package_count > 1 || provenance_count > 1 )); then
+            echo "Existing release ${release_tag} contains duplicate or unexpected assets; refusing to modify it" >&2
+            exit 1
+          fi
+          if (( package_count == 1 && provenance_count == 1 && asset_count == 2 )); then
+            echo 'Existing chart release is complete'
+            exit 0
+          fi
+          if (( asset_count > 1 )); then
+            echo "Existing release ${release_tag} is not a recognized partial upload; refusing to modify it" >&2
+            exit 1
+          fi
+
+          echo "Deleting validated partial release ${release_tag} so chart-releaser can retry it"
+          verify_source_tag
+          gh release delete "$release_tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --cleanup-tag \
+            --yes
+          if git ls-remote --exit-code --refs origin "refs/tags/${release_tag}" >/dev/null 2>&1; then
+            echo "Remote tag ${release_tag} still exists after partial-release cleanup" >&2
+            exit 1
+          else
+            ls_remote_status=$?
+            if [[ "$ls_remote_status" -ne 2 ]]; then
+              echo "Unable to verify deletion of remote tag ${release_tag}" >&2
+              exit 1
+            fi
+          fi
+
       - name: Upload chart to GitHub releases
         env:
           CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          source_ref="refs/tags/${GITHUB_REF_NAME}"
+          if ! source_refs="$(git ls-remote --exit-code origin "$source_ref" "${source_ref}^{}")"; then
+            echo "Source tag ${source_ref} no longer exists on origin" >&2
+            exit 1
+          fi
+          tag_object="$(awk -v ref="$source_ref" '$2 == ref { print $1 }' <<< "$source_refs")"
+          source_commit="$(awk -v ref="${source_ref}^{}" '$2 == ref { print $1 }' <<< "$source_refs")"
+          if [[ -z "$tag_object" ]]; then
+            echo "Origin did not return the exact source tag ${source_ref}" >&2
+            exit 1
+          fi
+          if [[ -z "$source_commit" ]]; then
+            source_commit="$tag_object"
+          fi
+          if [[ "$source_commit" != "$GITHUB_SHA" ]]; then
+            echo "Source tag ${source_ref} resolves to ${source_commit}, not ${GITHUB_SHA}" >&2
+            exit 1
+          fi
+
           cr upload \
             --owner '${{ github.repository_owner }}' \
             --git-repo '${{ github.event.repository.name }}' \
             --token "$CR_TOKEN" \
             --commit "$GITHUB_SHA" \
             --package-path .cr-release-packages \
+            --make-release-latest=false \
             --skip-existing
 
       - name: Verify uploaded chart release
+        id: verify_upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -350,6 +544,13 @@ jobs:
           test "$(jq -r '.target_commitish' <<< "$release_json")" = "$GITHUB_SHA"
           test "$(jq -r '.draft' <<< "$release_json")" = 'false'
           test "$(jq -r '.prerelease' <<< "$release_json")" = 'false'
+
+          git fetch --force origin \
+            "+refs/tags/${release_tag}:refs/tags/${release_tag}"
+          if [[ "$(git rev-list -n 1 "refs/tags/${release_tag}")" != "$GITHUB_SHA" ]]; then
+            echo "chart release tag ${release_tag} does not resolve to ${GITHUB_SHA}" >&2
+            exit 1
+          fi
 
           if [[ "$(jq '.assets | length' <<< "$release_json")" -ne 2 ]]; then
             echo 'chart release must contain only its package and provenance assets' >&2
@@ -373,9 +574,18 @@ jobs:
             --dir "$download_dir"
 
           remote_package="$download_dir/$(basename "$package")"
+          remote_provenance="$download_dir/$(basename "$provenance")"
           public_keyring="$RUNNER_TEMP/chart-signing-public.gpg"
-          gpg --batch --export '1CD080E5799F3F24960E791966B9EDBB9FE0C877' > "$public_keyring"
+          test -s "$remote_package"
+          test -s "$remote_provenance"
+          test -s "$public_keyring"
           helm verify --keyring "$public_keyring" "$remote_package"
+
+          test_values="$RUNNER_TEMP/remote-chart-test-values.yaml"
+          bash scripts/chart-test-values.sh charts/external-dns-porkbun-webhook/values.yaml > "$test_values"
+          helm template external-dns "$remote_package" \
+            --namespace external-dns \
+            --values "$test_values" >/dev/null
 
           # Helm archive headers and signatures are intentionally
           # nondeterministic. Compare the unpacked chart (including the
@@ -397,6 +607,53 @@ jobs:
           normalize_chart "$package" "$compare_parent/local"
           normalize_chart "$remote_package" "$compare_parent/remote"
           diff -ruN "$compare_parent/local" "$compare_parent/remote"
+
+          package_name="$(basename "$remote_package")"
+          provenance_name="$(basename "$remote_provenance")"
+          package_url="$(
+            jq -r --arg name "$package_name" \
+              '.assets[] | select(.name == $name) | .browser_download_url' <<< "$release_json"
+          )"
+          provenance_url="$(
+            jq -r --arg name "$provenance_name" \
+              '.assets[] | select(.name == $name) | .browser_download_url' <<< "$release_json"
+          )"
+          expected_package_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}/${package_name}"
+          expected_provenance_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}/${provenance_name}"
+          if [[ "$package_url" != "$expected_package_url" ]]; then
+            echo 'chart package asset has an unexpected download URL' >&2
+            exit 1
+          fi
+          if [[ "$provenance_url" != "$expected_provenance_url" ]]; then
+            echo 'chart provenance asset has an unexpected download URL' >&2
+            exit 1
+          fi
+
+          package_digest="$(sha256sum "$remote_package" | awk '{print $1}')"
+          provenance_digest="$(sha256sum "$remote_provenance" | awk '{print $1}')"
+          api_package_digest="$(
+            jq -r --arg name "$package_name" \
+              '.assets[] | select(.name == $name) | .digest' <<< "$release_json"
+          )"
+          api_provenance_digest="$(
+            jq -r --arg name "$provenance_name" \
+              '.assets[] | select(.name == $name) | .digest' <<< "$release_json"
+          )"
+          if [[ "$api_package_digest" != "sha256:${package_digest}" ]]; then
+            echo 'GitHub API digest does not match the downloaded chart package' >&2
+            exit 1
+          fi
+          if [[ "$api_provenance_digest" != "sha256:${provenance_digest}" ]]; then
+            echo 'GitHub API digest does not match the downloaded chart provenance' >&2
+            exit 1
+          fi
+
+          {
+            echo "package_digest=$package_digest"
+            echo "package_url=$package_url"
+            echo "provenance_digest=$provenance_digest"
+            echo "provenance_url=$provenance_url"
+          } >> "$GITHUB_OUTPUT"
 
       # Artifact Hub reads repository metadata and the landing page from the
       # chart repository root, beside index.yaml (not from inside a chart).
@@ -420,10 +677,21 @@ jobs:
       - name: Update gh-pages index
         env:
           CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE_DIGEST: ${{ steps.verify_upload.outputs.package_digest }}
+          PACKAGE_URL: ${{ steps.verify_upload.outputs.package_url }}
         run: |
           mkdir -p .cr-index
           # Index the immutable bytes downloaded from the GitHub release,
           # not the newly regenerated package from this workflow attempt.
+          version="${GITHUB_REF_NAME#v}"
+          helm repo index .cr-verified-packages --url "${PACKAGE_URL%/*}"
+          scripts/verify-chart-index.sh \
+            .cr-verified-packages/index.yaml \
+            external-dns-porkbun-webhook \
+            "$version" \
+            "$PACKAGE_DIGEST" \
+            "$PACKAGE_URL"
+
           cr index \
             --owner '${{ github.repository_owner }}' \
             --git-repo '${{ github.event.repository.name }}' \
@@ -432,3 +700,212 @@ jobs:
             --index-path .cr-index/index.yaml \
             --pages-branch gh-pages \
             --push
+
+          git fetch --force origin \
+            'refs/heads/gh-pages:refs/remotes/origin/gh-pages'
+          git show origin/gh-pages:index.yaml > "$RUNNER_TEMP/published-index.yaml"
+          scripts/verify-chart-index.sh \
+            "$RUNNER_TEMP/published-index.yaml" \
+            external-dns-porkbun-webhook \
+            "$version" \
+            "$PACKAGE_DIGEST" \
+            "$PACKAGE_URL"
+
+
+  promote-release:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-image, release-chart]
+    concurrency:
+      # Recompute precedence while holding the only mutable-channel lock. A
+      # delayed older workflow must never move channels back after a newer tag.
+      group: release-promotions
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote fully verified highest stable release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE_DIGEST: ${{ needs.release-chart.outputs.package_digest }}
+          PACKAGE_URL: ${{ needs.release-chart.outputs.package_url }}
+          PROVENANCE_DIGEST: ${{ needs.release-chart.outputs.provenance_digest }}
+          PROVENANCE_URL: ${{ needs.release-chart.outputs.provenance_url }}
+        shell: bash
+        run: |
+          source_ref="refs/tags/${GITHUB_REF_NAME}"
+          if ! source_refs="$(git ls-remote --exit-code origin "$source_ref" "${source_ref}^{}")"; then
+            echo "Source tag ${source_ref} no longer exists on origin" >&2
+            exit 1
+          fi
+          tag_object="$(awk -v ref="$source_ref" '$2 == ref { print $1 }' <<< "$source_refs")"
+          source_commit="$(awk -v ref="${source_ref}^{}" '$2 == ref { print $1 }' <<< "$source_refs")"
+          if [[ -z "$tag_object" ]]; then
+            echo "Origin did not return the exact source tag ${source_ref}" >&2
+            exit 1
+          fi
+          if [[ -z "$source_commit" ]]; then
+            source_commit="$tag_object"
+          fi
+          if [[ "$source_commit" != "$GITHUB_SHA" ]]; then
+            echo "Source tag ${source_ref} resolves to ${source_commit}, not ${GITHUB_SHA}" >&2
+            exit 1
+          fi
+
+          if ! remote_tags="$(git ls-remote --exit-code --tags --refs origin 'refs/tags/v*')"; then
+            echo 'Unable to enumerate release tags on origin' >&2
+            exit 1
+          fi
+          highest="$(
+            awk '{ print $2 }' <<< "$remote_tags" \
+              | while IFS= read -r ref; do
+                  tag=${ref#refs/tags/}
+                  if [[ "${tag#v}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+                    printf '%s\n' "$tag"
+                  fi
+                done \
+              | sort -V \
+              | tail -n1
+          )"
+          if [[ "$GITHUB_REF_NAME" != "$highest" ]]; then
+            echo "${GITHUB_REF_NAME} is not the highest stable tag (${highest}); immutable artifacts remain published without moving channels"
+            exit 0
+          fi
+
+          version="${GITHUB_REF_NAME#v}"
+          release_tag="external-dns-porkbun-webhook-${version}"
+          package_name="${release_tag}.tgz"
+          provenance_name="${package_name}.prov"
+          expected_package_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}/${package_name}"
+          expected_provenance_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}/${provenance_name}"
+          if [[ "$PACKAGE_URL" != "$expected_package_url" || "$PROVENANCE_URL" != "$expected_provenance_url" ]]; then
+            echo 'Verified chart asset outputs do not use canonical release URLs' >&2
+            exit 1
+          fi
+          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}")"
+          if ! jq -e \
+            --arg tag "$release_tag" \
+            --arg commit "$GITHUB_SHA" \
+            --arg package "$package_name" \
+            --arg package_url "$PACKAGE_URL" \
+            --arg package_digest "sha256:${PACKAGE_DIGEST}" \
+            --arg provenance "$provenance_name" \
+            --arg provenance_url "$PROVENANCE_URL" \
+            --arg provenance_digest "sha256:${PROVENANCE_DIGEST}" \
+            '.tag_name == $tag
+             and .target_commitish == $commit
+             and .draft == false
+             and .prerelease == false
+             and (.assets | length) == 2
+             and ([.assets[]
+                   | select(.name == $package
+                            and .browser_download_url == $package_url
+                            and .digest == $package_digest)] | length) == 1
+             and ([.assets[]
+                   | select(.name == $provenance
+                            and .browser_download_url == $provenance_url
+                            and .digest == $provenance_digest)] | length) == 1' \
+            <<< "$release_json" >/dev/null; then
+            echo "Chart release ${release_tag} is no longer the verified release" >&2
+            exit 1
+          fi
+
+          verified_assets="$(mktemp -d)"
+          gh release download "$release_tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$package_name" \
+            --pattern "$provenance_name" \
+            --dir "$verified_assets"
+          current_package_digest="$(sha256sum "$verified_assets/$package_name" | awk '{print $1}')"
+          current_provenance_digest="$(sha256sum "$verified_assets/$provenance_name" | awk '{print $1}')"
+          if [[ "$current_package_digest" != "$PACKAGE_DIGEST" ]]; then
+            echo 'Current chart package bytes differ from the verified release asset' >&2
+            exit 1
+          fi
+          if [[ "$current_provenance_digest" != "$PROVENANCE_DIGEST" ]]; then
+            echo 'Current chart provenance bytes differ from the verified release asset' >&2
+            exit 1
+          fi
+
+          chart_ref="refs/tags/${release_tag}"
+          if ! chart_refs="$(git ls-remote --exit-code origin "$chart_ref" "${chart_ref}^{}")"; then
+            echo "Chart tag ${chart_ref} no longer exists on origin" >&2
+            exit 1
+          fi
+          chart_object="$(awk -v ref="$chart_ref" '$2 == ref { print $1 }' <<< "$chart_refs")"
+          chart_commit="$(awk -v ref="${chart_ref}^{}" '$2 == ref { print $1 }' <<< "$chart_refs")"
+          if [[ -z "$chart_object" ]]; then
+            echo "Origin did not return the exact chart tag ${chart_ref}" >&2
+            exit 1
+          fi
+          if [[ -z "$chart_commit" ]]; then
+            chart_commit="$chart_object"
+          fi
+          if [[ "$chart_commit" != "$GITHUB_SHA" ]]; then
+            echo "Chart tag ${chart_ref} resolves to ${chart_commit}, not ${GITHUB_SHA}" >&2
+            exit 1
+          fi
+
+          git fetch --force origin 'refs/heads/gh-pages:refs/remotes/origin/gh-pages'
+          git show origin/gh-pages:index.yaml > "$RUNNER_TEMP/published-index.yaml"
+          scripts/verify-chart-index.sh \
+            "$RUNNER_TEMP/published-index.yaml" \
+            external-dns-porkbun-webhook \
+            "$version" \
+            "$PACKAGE_DIGEST" \
+            "$PACKAGE_URL"
+
+          image="${REGISTRY}/${IMAGE_NAME}"
+          source="https://github.com/${GITHUB_REPOSITORY}"
+          exact_digest="$(scripts/verify-image.sh "${image}:${version}" "$GITHUB_SHA" "$version" "$source")"
+          major=${version%%.*}
+          major_minor=$(cut -d. -f1-2 <<< "$version")
+          docker buildx imagetools create \
+            --tag "${image}:${major_minor}" \
+            --tag "${image}:${major}" \
+            --tag "${image}:latest" \
+            "${image}@${exact_digest}"
+
+          for channel in "$major_minor" "$major" latest; do
+            channel_digest="$(scripts/verify-image.sh "${image}:${channel}" "$GITHUB_SHA" "$version" "$source")"
+            if [[ "$channel_digest" != "$exact_digest" ]]; then
+              echo "${image}:${channel} does not resolve to immutable ${image}:${version}" >&2
+              exit 1
+            fi
+          done
+
+          release_id="$(jq -r '.id' <<< "$release_json")"
+          if [[ -z "$release_id" || "$release_id" == 'null' ]]; then
+            echo "Unable to resolve release ID for ${release_tag}" >&2
+            exit 1
+          fi
+          promoted_json="$(
+            gh api \
+              --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+              -f make_latest=true
+          )"
+          if [[ "$(jq -r '.tag_name' <<< "$promoted_json")" != "$release_tag" ]]; then
+            echo "GitHub promoted an unexpected release instead of ${release_tag}" >&2
+            exit 1
+          fi
+          latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name')"
+          if [[ "$latest_tag" != "$release_tag" ]]; then
+            echo "GitHub latest release is ${latest_tag}, not ${release_tag}" >&2
+            exit 1
+          fi

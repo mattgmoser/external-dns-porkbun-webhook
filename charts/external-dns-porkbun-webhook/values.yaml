@@ -6,10 +6,10 @@
 migration:
   # Chart 0.4.0 changes this package from a webhook-only release into a complete
   # ExternalDNS deployment. Helm templates cannot reliably identify the chart
-  # version being replaced, so every in-place upgrade must explicitly confirm
-  # that the separately managed controller has been accounted for. New installs
-  # do not need this acknowledgement and create a release-owned migration marker
-  # so their later routine upgrades do not need it either.
+  # version being replaced, so the first in-place upgrade from a legacy release
+  # must explicitly confirm that the separately managed controller has been
+  # accounted for. New installs do not need this acknowledgement and create a
+  # release-owned migration marker so later routine upgrades do not need it.
   acknowledgeControllerReplacement: false
 
 external-dns:

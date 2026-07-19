@@ -323,6 +323,15 @@ func (p *Provider) validateChanges(changes *plan.Changes) error {
 			return validationErrorf("update[%d] changes identity from %s/%s to %s/%s", i, oldEP.DNSName, oldEP.RecordType, newEP.DNSName, newEP.RecordType)
 		}
 	}
+	if err := validateRegistryCreateLayout(changes.Create); err != nil {
+		return validationErrorf("create layout: %v", err)
+	}
+	if _, _, err := registryDeletePairs(changes.Delete); err != nil {
+		return validationErrorf("delete layout: %v", err)
+	}
+	if _, _, err := registryUpdatePairs(changes.UpdateOld, changes.UpdateNew); err != nil {
+		return validationErrorf("update layout: %v", err)
+	}
 	return nil
 }
 
@@ -383,6 +392,9 @@ func (p *Provider) validateEndpoint(ep *endpoint.Endpoint, desired bool) error {
 	sort.Strings(ep.Targets)
 	if desired && ep.RecordType == endpoint.RecordTypeCNAME && len(seen) > 1 {
 		return fmt.Errorf("CNAME and ALIAS endpoints support exactly one distinct target, got %d", len(seen))
+	}
+	if isRegistryOwnershipTXT(ep) && len(ep.Targets) != 1 {
+		return fmt.Errorf("generated ownership TXT endpoints support exactly one target, got %d", len(ep.Targets))
 	}
 	return nil
 }

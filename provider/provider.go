@@ -17,6 +17,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -33,13 +34,27 @@ import (
 
 // Provider implements the external-dns webhook provider for Porkbun.
 type Provider struct {
-	client       *porkbun.Client
-	domain       string                 // Porkbun zone, e.g. "example.com"
-	domainFilter *endpoint.DomainFilter // optional further-restricted scope
-	include      []string               // validated explicit include filters
-	cache        *recordCache
-	dryRun       bool
-	applyMu      sync.Mutex
+	client                   *porkbun.Client
+	domain                   string                 // Porkbun zone, e.g. "example.com"
+	domainFilter             *endpoint.DomainFilter // optional further-restricted scope
+	include                  []string               // validated explicit include filters
+	cache                    *recordCache
+	dryRun                   bool
+	operationMu              sync.Mutex // keeps Records from observing an in-flight multi-call mutation
+	cleanupMu                sync.Mutex
+	pendingOwnershipCleanups map[string]pendingOwnershipCleanup
+	pendingOwnershipRepairs  map[string]pendingOwnershipRepair
+}
+
+type pendingOwnershipCleanup struct {
+	ownership *endpoint.Endpoint
+	protected *endpoint.Endpoint
+}
+
+type pendingOwnershipRepair struct {
+	old       *endpoint.Endpoint
+	new       *endpoint.Endpoint
+	protected *endpoint.Endpoint
 }
 
 // Config configures a Provider.
@@ -98,12 +113,14 @@ func New(cfg Config) (*Provider, error) {
 	cfg.DomainFilter = domainFilter
 	c := porkbun.New(cfg.APIKey, cfg.SecretAPIKey)
 	return &Provider{
-		client:       c,
-		domain:       cfg.Domain,
-		domainFilter: cfg.DomainFilter,
-		include:      include,
-		dryRun:       cfg.DryRun,
-		cache:        newRecordCache(cfg.CacheTTL),
+		client:                   c,
+		domain:                   cfg.Domain,
+		domainFilter:             cfg.DomainFilter,
+		include:                  include,
+		dryRun:                   cfg.DryRun,
+		cache:                    newRecordCache(cfg.CacheTTL),
+		pendingOwnershipCleanups: make(map[string]pendingOwnershipCleanup),
+		pendingOwnershipRepairs:  make(map[string]pendingOwnershipRepair),
 	}, nil
 }
 
@@ -115,6 +132,12 @@ func (p *Provider) GetDomainFilter() *endpoint.DomainFilter { return p.domainFil
 
 // Records returns the current state of the world (the records we manage).
 func (p *Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error) {
+	p.operationMu.Lock()
+	defer p.operationMu.Unlock()
+
+	if err := p.drainPendingOwnershipCleanups(ctx); err != nil {
+		return nil, fmt.Errorf("reconcile pending ownership cleanup: %w", err)
+	}
 	records, err := p.cachedRetrieve(ctx)
 	if err != nil {
 		return nil, err
@@ -196,11 +219,14 @@ func (p *Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error) {
 // external-dns batches changes as Create + UpdateOld+UpdateNew + Delete. For
 // idempotence and safety we re-fetch before each apply to catch drift.
 func (p *Provider) ApplyChanges(ctx context.Context, changes *plan.Changes) error {
-	p.applyMu.Lock()
-	defer p.applyMu.Unlock()
+	p.operationMu.Lock()
+	defer p.operationMu.Unlock()
 
 	if err := p.validateChanges(changes); err != nil {
 		return err
+	}
+	if err := p.drainPendingOwnershipCleanups(ctx); err != nil {
+		return fmt.Errorf("reconcile pending ownership cleanup before apply: %w", err)
 	}
 	current, err := p.client.Retrieve(ctx, p.domain)
 	if err != nil {
@@ -214,31 +240,96 @@ func (p *Provider) ApplyChanges(ctx context.Context, changes *plan.Changes) erro
 		return fmt.Errorf("index current records: %w", err)
 	}
 
-	// Order matters: Delete first (frees up name+content collisions), Create+Update next.
-	for _, ep := range changes.Delete {
-		if err := p.deleteEndpoint(ctx, ep, &idx); err != nil {
-			return fmt.Errorf("delete %s/%s: %w", ep.DNSName, ep.RecordType, err)
+	// ExternalDNS v0.21 sends registry deletes as [primaries..., ownership
+	// TXTs...]. Process each logical pair together so a deadline cannot delete
+	// many primaries before reaching their ownership records. If either half is
+	// ambiguous, the pending-cleanup queue makes the next Records call either
+	// expose the still-owned primary or finish removing the now-orphan TXT.
+	deletePairs, pairedDeletes, err := registryDeletePairs(changes.Delete)
+	if err != nil {
+		return validationErrorf("delete layout: %v", err)
+	}
+	if pairedDeletes {
+		for _, pair := range deletePairs {
+			if err := p.deleteEndpoint(ctx, pair.primary, &idx); err != nil {
+				return fmt.Errorf("delete %s/%s: %w", pair.primary.DNSName, pair.primary.RecordType,
+					p.reconcileOwnershipDeleteFailure(ctx, pair, err))
+			}
+			if err := p.deleteEndpoint(ctx, pair.ownership, &idx); err != nil {
+				return fmt.Errorf("delete %s/%s: %w", pair.ownership.DNSName, pair.ownership.RecordType,
+					p.reconcileOwnershipDeleteFailure(ctx, pair, err))
+			}
+		}
+	} else {
+		// Provider-only callers do not necessarily use the TXT registry.
+		for _, ep := range changes.Delete {
+			if err := p.deleteEndpoint(ctx, ep, &idx); err != nil {
+				return fmt.Errorf("delete %s/%s: %w", ep.DNSName, ep.RecordType, err)
+			}
 		}
 	}
 
-	// Updates: external-dns sends UpdateOld + UpdateNew with same length and matching positions.
-	for i, newEP := range changes.UpdateNew {
-		var oldEP *endpoint.Endpoint
-		if i < len(changes.UpdateOld) {
-			oldEP = changes.UpdateOld[i]
+	// ExternalDNS's TXT registry appends ownership updates in the same paired
+	// layout as deletes. Converge each ownership record before its primary so a
+	// failed primary mutation never becomes unowned.
+	updatePairs, pairedUpdates, err := registryUpdatePairs(changes.UpdateOld, changes.UpdateNew)
+	if err != nil {
+		return validationErrorf("update layout: %v", err)
+	}
+	if pairedUpdates {
+		for _, pair := range updatePairs {
+			if err := p.updateOwnershipEndpoint(ctx, pair.ownershipOld, pair.ownershipNew, &idx); err != nil {
+				p.enqueueOwnershipRepair(pendingOwnershipRepair{
+					old: pair.ownershipOld, new: pair.ownershipNew, protected: pair.primaryNew,
+				})
+				if repairErr := p.drainPendingOwnershipCleanups(ctx); repairErr != nil {
+					err = errors.Join(err, fmt.Errorf("reconcile generated ownership TXT update: %w", repairErr))
+				}
+				return fmt.Errorf("update %s/%s: %w", pair.ownershipNew.DNSName, pair.ownershipNew.RecordType, err)
+			}
+			if err := p.updateEndpoint(ctx, pair.primaryOld, pair.primaryNew, &idx); err != nil {
+				p.enqueueOwnershipCleanup(pendingOwnershipCleanup{
+					ownership: pair.ownershipNew,
+					protected: pair.primaryNew,
+				})
+				if cleanupErr := p.drainPendingOwnershipCleanups(ctx); cleanupErr != nil {
+					err = errors.Join(err, fmt.Errorf("reconcile generated ownership TXT: %w", cleanupErr))
+				}
+				return fmt.Errorf("update %s/%s: %w", pair.primaryNew.DNSName, pair.primaryNew.RecordType, err)
+			}
 		}
-		if err := p.updateEndpoint(ctx, oldEP, newEP, &idx); err != nil {
-			return fmt.Errorf("update %s/%s: %w", newEP.DNSName, newEP.RecordType, err)
+	} else {
+		for i, newEP := range changes.UpdateNew {
+			if err := p.updateEndpoint(ctx, changes.UpdateOld[i], newEP, &idx); err != nil {
+				return fmt.Errorf("update %s/%s: %w", newEP.DNSName, newEP.RecordType, err)
+			}
 		}
 	}
 
 	// ExternalDNS's TXT registry appends ownership records after the records
-	// they protect. Reverse that dependency before writing: if a later main
-	// record create fails, the next reconciliation can observe the ownership
-	// TXT and safely finish the create. Creating the main record first can leave
-	// an unowned record that the registry deliberately will not adopt.
+	// they protect. Reverse that dependency before writing so an ambiguous main
+	// create can never leave an unowned record. If a later create fails, newly
+	// created ownership records are conditionally rolled back only after a fresh
+	// retrieve confirms that no protected primary exists.
+	createdOwnership := make([]pendingOwnershipCleanup, 0)
 	for _, ep := range ownershipFirstCreates(changes.Create) {
-		if err := p.createEndpoint(ctx, ep, &idx); err != nil {
+		createdTargets, err := p.createEndpoint(ctx, ep, &idx)
+		if isRegistryOwnershipTXT(ep) {
+			protected := protectedEndpointForOwnership(ep, changes.Create)
+			for _, target := range createdTargets {
+				ownership := ep.DeepCopy()
+				ownership.Targets = endpoint.Targets{target}
+				createdOwnership = append(createdOwnership, pendingOwnershipCleanup{
+					ownership: ownership,
+					protected: protected.DeepCopy(),
+				})
+			}
+		}
+		if err != nil {
+			cleanupErr := p.rollbackCreatedOwnership(ctx, createdOwnership)
+			if cleanupErr != nil {
+				err = errors.Join(err, fmt.Errorf("rollback generated ownership TXT records: %w", cleanupErr))
+			}
 			return fmt.Errorf("create %s/%s: %w", ep.DNSName, ep.RecordType, err)
 		}
 	}
@@ -258,6 +349,192 @@ func ownershipFirstCreates(creates []*endpoint.Endpoint) []*endpoint.Endpoint {
 		}
 	}
 	return ordered
+}
+
+type registryDeletePair struct {
+	primary   *endpoint.Endpoint
+	ownership *endpoint.Endpoint
+}
+
+type registryUpdatePair struct {
+	primaryOld   *endpoint.Endpoint
+	primaryNew   *endpoint.Endpoint
+	ownershipOld *endpoint.Endpoint
+	ownershipNew *endpoint.Endpoint
+}
+
+// validateRegistryCreateLayout verifies the partial one-to-one layout used by
+// v0.21 creates: generated ownership records are a suffix, but the suffix can
+// be shorter than the primary prefix when an ownership TXT already exists.
+func validateRegistryCreateLayout(creates []*endpoint.Endpoint) error {
+	ownershipStart := -1
+	for i, ep := range creates {
+		if isRegistryOwnershipTXT(ep) {
+			ownershipStart = i
+			break
+		}
+	}
+	if ownershipStart == -1 {
+		return nil
+	}
+	if ownershipStart == 0 {
+		return fmt.Errorf("generated ownership records must follow primary creates")
+	}
+	if len(creates)-ownershipStart > ownershipStart {
+		return fmt.Errorf("generated ownership records cannot outnumber primary creates")
+	}
+
+	primaryNames := make(map[string]struct{}, ownershipStart)
+	for _, primary := range creates[:ownershipStart] {
+		if isRegistryOwnershipTXT(primary) {
+			return fmt.Errorf("generated ownership records must follow all primary creates")
+		}
+		primaryNames[primary.DNSName] = struct{}{}
+	}
+	for i, ownership := range creates[ownershipStart:] {
+		if !isRegistryOwnershipTXT(ownership) {
+			return fmt.Errorf("primary create[%d] follows generated ownership records", ownershipStart+i)
+		}
+		if len(ownership.Targets) != 1 {
+			return fmt.Errorf("ownership create[%d] must contain exactly one target", ownershipStart+i)
+		}
+		ownedName := canonicalDNSName(ownership.Labels[endpoint.OwnedRecordLabelKey])
+		if _, ok := primaryNames[ownedName]; !ok {
+			return fmt.Errorf("ownership create[%d] protects %q without a matching primary", ownershipStart+i, ownedName)
+		}
+	}
+	if len(creates)-ownershipStart == ownershipStart {
+		for i, ownership := range creates[ownershipStart:] {
+			ownedName := canonicalDNSName(ownership.Labels[endpoint.OwnedRecordLabelKey])
+			if ownedName != creates[i].DNSName {
+				return fmt.Errorf("ownership create[%d] protects %q, want %q", ownershipStart+i, ownedName, creates[i].DNSName)
+			}
+		}
+	}
+	return nil
+}
+
+// registryDeletePairs recognizes the exact layout emitted by ExternalDNS's
+// v0.21 TXT registry. A batch with no generated ownership records is left in
+// provider-native order. Once a generated ownership record is present, the
+// entire layout must be unambiguous before any Porkbun request is made.
+func registryDeletePairs(deletes []*endpoint.Endpoint) ([]registryDeletePair, bool, error) {
+	ownershipStart := -1
+	for i, ep := range deletes {
+		if isRegistryOwnershipTXT(ep) {
+			ownershipStart = i
+			break
+		}
+	}
+	if ownershipStart == -1 {
+		return nil, false, nil
+	}
+	if ownershipStart == 0 || len(deletes) != 2*ownershipStart {
+		return nil, false, fmt.Errorf("generated ownership records must be a one-to-one suffix for primary deletes")
+	}
+
+	pairs := make([]registryDeletePair, ownershipStart)
+	for i := 0; i < ownershipStart; i++ {
+		primary, ownership := deletes[i], deletes[ownershipStart+i]
+		if isRegistryOwnershipTXT(primary) || !isRegistryOwnershipTXT(ownership) {
+			return nil, false, fmt.Errorf("generated ownership records must follow all primary deletes")
+		}
+		if len(ownership.Targets) != 1 {
+			return nil, false, fmt.Errorf("ownership delete[%d] must contain exactly one target", ownershipStart+i)
+		}
+		ownedName := canonicalDNSName(ownership.Labels[endpoint.OwnedRecordLabelKey])
+		if ownedName == "" || ownedName != primary.DNSName {
+			return nil, false, fmt.Errorf("ownership delete[%d] protects %q, want %q", ownershipStart+i, ownedName, primary.DNSName)
+		}
+		pairs[i] = registryDeletePair{primary: primary, ownership: ownership}
+	}
+	return pairs, true, nil
+}
+
+// registryUpdatePairs recognizes the one-to-one ownership suffix appended to
+// both update slices by ExternalDNS's v0.21 TXT registry.
+func registryUpdatePairs(oldEndpoints, newEndpoints []*endpoint.Endpoint) ([]registryUpdatePair, bool, error) {
+	oldStart, newStart := -1, -1
+	for i, ep := range oldEndpoints {
+		if isRegistryOwnershipTXT(ep) {
+			oldStart = i
+			break
+		}
+	}
+	for i, ep := range newEndpoints {
+		if isRegistryOwnershipTXT(ep) {
+			newStart = i
+			break
+		}
+	}
+	if oldStart == -1 && newStart == -1 {
+		return nil, false, nil
+	}
+	if oldStart <= 0 || newStart != oldStart || len(oldEndpoints) != 2*oldStart || len(newEndpoints) != 2*newStart {
+		return nil, false, fmt.Errorf("generated ownership records must be matching one-to-one suffixes for primary updates")
+	}
+
+	pairs := make([]registryUpdatePair, oldStart)
+	for i := 0; i < oldStart; i++ {
+		primaryOld, primaryNew := oldEndpoints[i], newEndpoints[i]
+		ownershipOld, ownershipNew := oldEndpoints[oldStart+i], newEndpoints[newStart+i]
+		if isRegistryOwnershipTXT(primaryOld) || isRegistryOwnershipTXT(primaryNew) ||
+			!isRegistryOwnershipTXT(ownershipOld) || !isRegistryOwnershipTXT(ownershipNew) {
+			return nil, false, fmt.Errorf("generated ownership records must follow all primary updates")
+		}
+		if len(ownershipOld.Targets) != 1 || len(ownershipNew.Targets) != 1 {
+			return nil, false, fmt.Errorf("ownership update[%d] must contain exactly one old and new target", oldStart+i)
+		}
+		oldOwnedName := canonicalDNSName(ownershipOld.Labels[endpoint.OwnedRecordLabelKey])
+		newOwnedName := canonicalDNSName(ownershipNew.Labels[endpoint.OwnedRecordLabelKey])
+		if oldOwnedName != primaryOld.DNSName || newOwnedName != primaryNew.DNSName {
+			return nil, false, fmt.Errorf("ownership update[%d] does not protect its paired primary", oldStart+i)
+		}
+		pairs[i] = registryUpdatePair{
+			primaryOld: primaryOld, primaryNew: primaryNew,
+			ownershipOld: ownershipOld, ownershipNew: ownershipNew,
+		}
+	}
+	return pairs, true, nil
+}
+
+// protectedEndpointForOwnership returns the most specific primary identity the
+// provider can infer without knowing the TXT registry's configurable mapper.
+// A complete v0.21 ownership suffix is positionally paired with the primary
+// prefix, which disambiguates same-name records of different types. A partial
+// suffix can omit already-existing markers; when its matching primary type is
+// genuinely ambiguous, an empty type deliberately makes cleanup conservative.
+func protectedEndpointForOwnership(ownership *endpoint.Endpoint, creates []*endpoint.Endpoint) *endpoint.Endpoint {
+	protected := &endpoint.Endpoint{DNSName: canonicalDNSName(ownership.Labels[endpoint.OwnedRecordLabelKey])}
+	ownershipStart := -1
+	for i, candidate := range creates {
+		if isRegistryOwnershipTXT(candidate) {
+			ownershipStart = i
+			break
+		}
+	}
+	if ownershipStart > 0 && len(creates)-ownershipStart == ownershipStart {
+		for i, candidate := range creates[ownershipStart:] {
+			if candidate == ownership && creates[i].DNSName == protected.DNSName {
+				protected.RecordType = creates[i].RecordType
+				return protected
+			}
+		}
+	}
+	for _, candidate := range creates {
+		if candidate == nil || isRegistryOwnershipTXT(candidate) || candidate.DNSName != protected.DNSName {
+			continue
+		}
+		if protected.RecordType == "" {
+			protected.RecordType = candidate.RecordType
+			continue
+		}
+		if protected.RecordType != candidate.RecordType {
+			protected.RecordType = ""
+			break
+		}
+	}
+	return protected
 }
 
 // AdjustEndpoints lets a provider tweak desired endpoints before they're stored.
@@ -293,18 +570,250 @@ func (p *Provider) cachedRetrieve(ctx context.Context) ([]porkbun.Record, error)
 	return recs, nil
 }
 
-func (p *Provider) inFilter(name string) bool {
-	return matchesExplicitFilters(p.include, canonicalDNSName(name))
+func ownershipCleanupKey(cleanup pendingOwnershipCleanup) string {
+	return strings.Join([]string{
+		cleanup.ownership.DNSName,
+		cleanup.ownership.RecordType,
+		strings.Join(cleanup.ownership.Targets, "\x1e"),
+		cleanup.protected.DNSName,
+		cleanup.protected.RecordType,
+	}, "\x1f")
 }
 
-// createEndpoint creates one Porkbun record per target.
-func (p *Provider) createEndpoint(ctx context.Context, ep *endpoint.Endpoint, idx *index) error {
-	for _, target := range ep.Targets {
-		if err := p.convergeTarget(ctx, ep, target, idx, "create", "edit-on-create"); err != nil {
+func ownershipRepairKey(repair pendingOwnershipRepair) string {
+	return strings.Join([]string{
+		repair.old.DNSName,
+		repair.old.RecordType,
+		strings.Join(repair.old.Targets, "\x1e"),
+		repair.new.DNSName,
+		repair.new.RecordType,
+		strings.Join(repair.new.Targets, "\x1e"),
+		repair.protected.DNSName,
+		repair.protected.RecordType,
+	}, "\x1f")
+}
+
+func (p *Provider) enqueueOwnershipCleanup(cleanup pendingOwnershipCleanup) {
+	p.cleanupMu.Lock()
+	defer p.cleanupMu.Unlock()
+
+	if p.pendingOwnershipCleanups == nil {
+		p.pendingOwnershipCleanups = make(map[string]pendingOwnershipCleanup)
+	}
+	cleanup.ownership = cleanup.ownership.DeepCopy()
+	cleanup.protected = cleanup.protected.DeepCopy()
+	p.pendingOwnershipCleanups[ownershipCleanupKey(cleanup)] = cleanup
+}
+
+func (p *Provider) enqueueOwnershipRepair(repair pendingOwnershipRepair) {
+	p.cleanupMu.Lock()
+	defer p.cleanupMu.Unlock()
+
+	if p.pendingOwnershipRepairs == nil {
+		p.pendingOwnershipRepairs = make(map[string]pendingOwnershipRepair)
+	}
+	repair.old = repair.old.DeepCopy()
+	repair.new = repair.new.DeepCopy()
+	repair.protected = repair.protected.DeepCopy()
+	p.pendingOwnershipRepairs[ownershipRepairKey(repair)] = repair
+}
+
+func (p *Provider) reconcileOwnershipDeleteFailure(ctx context.Context, pair registryDeletePair, applyErr error) error {
+	p.enqueueOwnershipCleanup(pendingOwnershipCleanup{
+		ownership: pair.ownership,
+		protected: pair.primary,
+	})
+	if cleanupErr := p.drainPendingOwnershipCleanups(ctx); cleanupErr != nil {
+		return errors.Join(applyErr, fmt.Errorf("reconcile generated ownership TXT: %w", cleanupErr))
+	}
+	return applyErr
+}
+
+func (p *Provider) rollbackCreatedOwnership(ctx context.Context, cleanups []pendingOwnershipCleanup) error {
+	if p.dryRun {
+		return nil
+	}
+	for _, cleanup := range cleanups {
+		p.enqueueOwnershipCleanup(cleanup)
+	}
+	return p.drainPendingOwnershipCleanups(ctx)
+}
+
+// drainPendingOwnershipCleanups uses a fresh read, never the provider cache.
+// It reconciles mixed ownership updates and removes an ownership record only
+// when the protected primary is confirmed absent. Failed work remains queued
+// and makes Records fail closed so the TXT registry cannot successfully
+// observe and then forget an invisible orphan.
+func (p *Provider) drainPendingOwnershipCleanups(ctx context.Context) error {
+	p.cleanupMu.Lock()
+	defer p.cleanupMu.Unlock()
+
+	if len(p.pendingOwnershipCleanups) == 0 && len(p.pendingOwnershipRepairs) == 0 {
+		return nil
+	}
+
+	p.cache.invalidate()
+	records, err := p.client.Retrieve(ctx, p.domain)
+	if err != nil {
+		return fmt.Errorf("retrieve before ownership cleanup: %w", err)
+	}
+	idx, err := indexRecords(p.scopedRecords(records))
+	if err != nil {
+		return fmt.Errorf("index before ownership cleanup: %w", err)
+	}
+
+	repairKeys := make([]string, 0, len(p.pendingOwnershipRepairs))
+	for key := range p.pendingOwnershipRepairs {
+		repairKeys = append(repairKeys, key)
+	}
+	sort.Strings(repairKeys)
+	for _, key := range repairKeys {
+		repair := p.pendingOwnershipRepairs[key]
+		if err := p.reconcilePendingOwnershipRepair(ctx, repair, &idx); err != nil {
+			p.cache.invalidate()
+			return fmt.Errorf("repair %s/%s: %w", repair.new.DNSName, repair.new.RecordType, err)
+		}
+		delete(p.pendingOwnershipRepairs, key)
+	}
+
+	keys := make([]string, 0, len(p.pendingOwnershipCleanups))
+	for key := range p.pendingOwnershipCleanups {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		cleanup := p.pendingOwnershipCleanups[key]
+		if protectedRecordExists(&idx, cleanup) {
+			// The marker is still needed by its protected record. Preserve it and
+			// resolve the pending item.
+			delete(p.pendingOwnershipCleanups, key)
+			continue
+		}
+		if err := p.deleteEndpoint(ctx, cleanup.ownership, &idx); err != nil {
+			p.cache.invalidate()
+			return fmt.Errorf("delete %s/%s: %w", cleanup.ownership.DNSName, cleanup.ownership.RecordType, err)
+		}
+		delete(p.pendingOwnershipCleanups, key)
+	}
+	p.cache.invalidate()
+	return nil
+}
+
+func (p *Provider) reconcilePendingOwnershipRepair(ctx context.Context, repair pendingOwnershipRepair, idx *index) error {
+	primaryPresent := protectedRecordExists(idx, pendingOwnershipCleanup{
+		ownership: repair.new,
+		protected: repair.protected,
+	})
+	if !primaryPresent {
+		if err := p.deleteEndpoint(ctx, repair.old, idx); err != nil {
+			return err
+		}
+		if repair.old.Targets[0] != repair.new.Targets[0] {
+			if err := p.deleteEndpoint(ctx, repair.new, idx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	oldTarget, newTarget := repair.old.Targets[0], repair.new.Targets[0]
+	oldIDs := idx.match(repair.old.DNSName, repair.old.RecordType, oldTarget)
+	newIDs := idx.match(repair.new.DNSName, repair.new.RecordType, newTarget)
+	if oldTarget == newTarget {
+		_, err := p.convergeTarget(ctx, repair.new, newTarget, idx, "create-ownership-repair", "edit-ownership-repair")
+		return err
+	}
+	if (len(oldIDs) > 0) != (len(newIDs) > 0) {
+		// Exactly one ownership value still protects the untouched primary, so
+		// the next ExternalDNS reconciliation can safely retry the update.
+		return nil
+	}
+	if len(oldIDs) == 0 {
+		_, err := p.convergeTarget(ctx, repair.new, newTarget, idx, "create-ownership-repair", "edit-ownership-repair")
+		return err
+	}
+	if err := p.editOwnershipTargets(ctx, repair.new, newTarget, oldIDs, idx); err != nil {
+		return err
+	}
+	_, err := p.convergeTarget(ctx, repair.new, newTarget, idx, "create-ownership-repair", "edit-ownership-repair")
+	return err
+}
+
+func (p *Provider) editOwnershipTargets(
+	ctx context.Context,
+	newEP *endpoint.Endpoint,
+	newTarget string,
+	ids []string,
+	idx *index,
+) error {
+	in, err := p.recordInput(newEP, newTarget)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		log.WithFields(log.Fields{
+			"action": "edit-ownership-on-update", "name": newEP.DNSName,
+			"type": newEP.RecordType, "target": newTarget, "id": id, "dry_run": p.dryRun,
+		}).Info("apply")
+		if !p.dryRun {
+			if err := p.client.Edit(ctx, p.domain, id, in); err != nil {
+				return err
+			}
+		}
+		if err := idx.replace(id, newEP.DNSName, in); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// protectedRecordExists reports whether the exact managed record protected by
+// an ownership marker is present. ExternalDNS v0.21 always type-qualifies its
+// generated TXT names, so a same-name sibling of a different type must not keep
+// an orphaned marker alive. An empty protected type remains conservative for a
+// genuinely ambiguous caller-supplied batch.
+func protectedRecordExists(idx *index, cleanup pendingOwnershipCleanup) bool {
+	name := canonicalDNSName(cleanup.protected.DNSName)
+	recordType := strings.ToUpper(strings.TrimSpace(cleanup.protected.RecordType))
+	if name == "" {
+		return true
+	}
+	if recordType != "" && name == cleanup.ownership.DNSName && recordType == cleanup.ownership.RecordType {
+		// Provider state cannot distinguish a colliding TXT primary from its
+		// ownership marker, so deletion would not be safe.
+		return true
+	}
+	for key, ids := range idx.byKey {
+		if len(ids) == 0 || key.name != name {
+			continue
+		}
+		if recordType == "" || key.recType == recordType {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Provider) inFilter(name string) bool {
+	return matchesExplicitFilters(p.include, canonicalDNSName(name))
+}
+
+// createEndpoint creates one Porkbun record per target and reports targets for
+// which Create was attempted while the record was absent. The API may commit a
+// request even when the client receives an error, so failure recovery confirms
+// actual state with a fresh Retrieve.
+func (p *Provider) createEndpoint(ctx context.Context, ep *endpoint.Endpoint, idx *index) ([]string, error) {
+	createdTargets := make([]string, 0, len(ep.Targets))
+	for _, target := range ep.Targets {
+		attempted, err := p.convergeTarget(ctx, ep, target, idx, "create", "edit-on-create")
+		if attempted {
+			createdTargets = append(createdTargets, target)
+		}
+		if err != nil {
+			return createdTargets, err
+		}
+	}
+	return createdTargets, nil
 }
 
 // convergeTarget ensures one exact Porkbun record exists for an endpoint
@@ -317,10 +826,10 @@ func (p *Provider) convergeTarget(
 	idx *index,
 	createAction string,
 	editAction string,
-) error {
+) (bool, error) {
 	in, err := p.recordInput(ep, target)
 	if err != nil {
-		return err
+		return false, err
 	}
 	ids := idx.match(ep.DNSName, ep.RecordType, target)
 	if len(ids) == 0 {
@@ -329,13 +838,13 @@ func (p *Provider) convergeTarget(
 			"target": target, "ttl": in.TTL, "dry_run": p.dryRun,
 		}).Info("apply")
 		if p.dryRun {
-			return idx.replace(dryRunRecordID(ep, target), ep.DNSName, in)
+			return true, idx.replace(dryRunRecordID(ep, target), ep.DNSName, in)
 		}
 		id, err := p.client.Create(ctx, p.domain, in)
 		if err != nil {
-			return err
+			return true, err
 		}
-		return idx.replace(id, ep.DNSName, in)
+		return true, idx.replace(id, ep.DNSName, in)
 	}
 
 	keeper := preferredRecordID(ids, idx, in)
@@ -351,11 +860,11 @@ func (p *Provider) convergeTarget(
 		}).Info("apply")
 		if !p.dryRun {
 			if err := p.client.Edit(ctx, p.domain, keeper, in); err != nil {
-				return err
+				return false, err
 			}
 		}
 		if err := idx.replace(keeper, ep.DNSName, in); err != nil {
-			return err
+			return false, err
 		}
 	}
 
@@ -364,10 +873,10 @@ func (p *Provider) convergeTarget(
 			continue
 		}
 		if err := p.deleteIndexedRecord(ctx, idx, id, "delete-duplicate"); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return nil
+	return false, nil
 }
 
 func dryRunRecordID(ep *endpoint.Endpoint, target string) string {
@@ -467,9 +976,28 @@ func (p *Provider) updateEndpoint(ctx context.Context, oldEP, newEP *endpoint.En
 	}
 
 	for _, target := range sortedMapKeys(newTargets) {
-		if err := p.convergeTarget(ctx, newEP, target, idx, "create-on-update", "edit-on-update"); err != nil {
+		if _, err := p.convergeTarget(ctx, newEP, target, idx, "create-on-update", "edit-on-update"); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// updateOwnershipEndpoint edits an existing ownership record in place whenever
+// its serialized labels change. This avoids a window with two distinct owner
+// values, which v0.21 would collapse and only partially delete.
+func (p *Provider) updateOwnershipEndpoint(ctx context.Context, oldEP, newEP *endpoint.Endpoint, idx *index) error {
+	oldTarget, newTarget := oldEP.Targets[0], newEP.Targets[0]
+	if oldTarget != newTarget {
+		oldIDs := idx.match(oldEP.DNSName, oldEP.RecordType, oldTarget)
+		if len(oldIDs) > 0 {
+			if err := p.editOwnershipTargets(ctx, newEP, newTarget, oldIDs, idx); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := p.convergeTarget(ctx, newEP, newTarget, idx, "create-ownership-on-update", "edit-ownership-on-update"); err != nil {
+		return err
 	}
 	return nil
 }

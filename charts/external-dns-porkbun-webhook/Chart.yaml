@@ -46,7 +46,7 @@ annotations:
     - kind: fixed
       description: Made ALIAS ownership records compatible with the ExternalDNS v0.21 TXT registry, including apex names
     - kind: fixed
-      description: Made partial record creation recoverable by writing ownership TXT records before their protected records
+      description: Made partial TXT-registry creates, updates, and deletes recoverable without exposing unowned DNS records
     - kind: fixed
       description: Added a validated wildcard replacement so ExternalDNS always generates valid wildcard ownership TXT names
   artifacthub.io/images: |

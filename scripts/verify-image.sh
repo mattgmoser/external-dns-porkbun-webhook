@@ -4,16 +4,45 @@ set -euo pipefail
 image_ref=${1:?image reference is required}
 expected_revision=${2:?expected source revision is required}
 expected_version=${3:?expected image version is required}
+expected_source=${4:?expected source repository URL is required}
 
 image_json=$(docker buildx imagetools inspect "$image_ref" --format '{{json .Image}}')
 jq -e \
   --arg revision "$expected_revision" \
   --arg version "$expected_version" \
+  --arg source "$expected_source" \
   '((keys | sort) == ["linux/amd64", "linux/arm/v7", "linux/arm64"])
    and all(.[];
      .config.Labels["org.opencontainers.image.revision"] == $revision
-     and .config.Labels["org.opencontainers.image.version"] == $version)' \
+     and .config.Labels["org.opencontainers.image.version"] == $version
+     and .config.Labels["org.opencontainers.image.source"] == $source)' \
   <<< "$image_json" >/dev/null
+
+provenance_json=$(docker buildx imagetools inspect "$image_ref" --format '{{json .Provenance}}')
+jq -e \
+  --arg revision "$expected_revision" \
+  --arg version "$expected_version" \
+  --arg source "$expected_source" \
+  '((keys | sort) == ["linux/amd64", "linux/arm/v7", "linux/arm64"])
+   and all(.[].SLSA;
+     (.buildDefinition.buildType | type == "string" and length > 0)
+     and .buildDefinition.externalParameters.request.args["build-arg:VERSION"] == $version
+     and .buildDefinition.externalParameters.request.args["label:org.opencontainers.image.revision"] == $revision
+     and .buildDefinition.externalParameters.request.args["label:org.opencontainers.image.version"] == $version
+     and .buildDefinition.externalParameters.request.root.request.args["vcs:revision"] == $revision
+     and .buildDefinition.externalParameters.request.root.request.args["vcs:source"] == $source
+     and (.runDetails.builder.id | startswith($source + "/actions/runs/")))' \
+  <<< "$provenance_json" >/dev/null
+
+sbom_json=$(docker buildx imagetools inspect "$image_ref" --format '{{json .SBOM}}')
+jq -e \
+  '((keys | sort) == ["linux/amd64", "linux/arm/v7", "linux/arm64"])
+   and all(.[].SPDX;
+     .spdxVersion == "SPDX-2.3"
+     and .SPDXID == "SPDXRef-DOCUMENT"
+     and (.documentNamespace | type == "string" and length > 0)
+     and (.packages | type == "array" and length > 0))' \
+  <<< "$sbom_json" >/dev/null
 
 manifest_json=$(docker buildx imagetools inspect "$image_ref" --format '{{json .Manifest}}')
 digest=$(jq -r '.digest // empty' <<< "$manifest_json")

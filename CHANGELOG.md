@@ -20,7 +20,7 @@
 - Accept and discard provider metadata that ExternalDNS v0.21 copies onto generated ownership TXT endpoints, while continuing to reject alias metadata on ordinary TXT records.
 - Consume the TXT registry's current-endpoint `txt/force-update` control marker instead of rejecting its metadata repair path.
 - Use apex-safe `external-dns-%{record_type}.` ownership names plus a stable wildcard replacement for new installs, and test non-apex, apex ALIAS, and wildcard writes through the exact v0.21 TXT registry.
-- Write generated ownership TXT records before the records they protect so a partial Porkbun create failure remains recoverable on the next reconciliation.
+- Write generated ownership TXT records before the records they protect, validate v0.21's paired mutation layouts, and conditionally clean invisible ownership orphans after partial creates, updates, or deletes.
 - Reject multi-target CNAME and ALIAS endpoints before any Porkbun write because those record types are single-target by definition.
 
 ### Distribution
@@ -31,8 +31,9 @@
 - Declare the upstream chart dependency and both runtime images explicitly in chart metadata.
 - Add native Helm dependency updates so Dependabot can track new supported ExternalDNS chart releases.
 - Reject a release tag when the wrapper defaults, direct-integration example, or Artifact Hub image metadata do not point at that release's image.
-- Keep full-version image tags immutable across workflow retries, serialize overlapping release channels, and move `major`, `minor`, and `latest` only from the highest stable release.
-- Bind the chart-releaser tag to the source commit, verify the uploaded package and provenance, compare regenerated chart contents semantically, and build the Helm index from the immutable downloaded release asset.
+- Accept only stable core-SemVer release tags, keep full-version image tags immutable across workflow retries, and move the `major.minor`, `major`, and `latest` image tags plus GitHub's latest release only after the highest stable release's chart, signature, and published index are verified.
+- Bind image metadata and provenance to the exact source repository, revision, and GitHub Actions run; bind the chart-releaser tag to the source commit; and anchor chart provenance verification to the checked-in signing key.
+- Safely recreate only validated zero- or one-asset partial chart releases after an interrupted upload, compare regenerated chart contents semantically, and require the published Helm index to match the immutable downloaded release asset's digest and URL.
 - Document TXT multi-string segmentation and escaped-quote normalization instead of leaving those representation limits implicit.
 
 ## 0.3.0
