@@ -22,6 +22,7 @@ const (
 	maxDNSTTL                       = int64(1<<32 - 1)
 	providerSpecificTTLDrift        = "porkbun/ttl-drift"
 	providerSpecificAlias           = "alias"
+	providerSpecificTXTForceUpdate  = "txt/force-update"
 	providerSpecificTTLDriftEnabled = "true"
 )
 
@@ -213,11 +214,24 @@ func (p *Provider) adjustEndpoint(ep *endpoint.Endpoint, canonicalName string) e
 		targets[canonical] = struct{}{}
 	}
 	ep.Targets = endpoint.Targets(sortedMapKeys(targets))
+	if ep.RecordType == endpoint.RecordTypeCNAME && len(ep.Targets) > 1 {
+		return fmt.Errorf("CNAME and ALIAS endpoints support exactly one distinct target, got %d", len(ep.Targets))
+	}
 	sortProviderSpecific(ep)
 	return nil
 }
 
 func normalizeProviderSpecific(ep *endpoint.Endpoint, desired bool) error {
+	// ExternalDNS v0.21's TXT registry copies the owned endpoint's provider
+	// metadata onto its generated ownership TXT record. Those properties have no
+	// TXT wire meaning; validating alias=true as if it described the TXT record
+	// would reject an otherwise valid ALIAS plus ownership pair. Restrict this
+	// normalization to registry-labelled TXT records so ordinary TXT endpoints
+	// still fail closed on unsupported provider metadata. Known inherited
+	// properties are validated before being discarded; an ownership label must
+	// never become a way to bypass validation of unknown metadata.
+	ownershipTXT := isRegistryOwnershipTXT(ep)
+
 	seen := make(map[string]struct{}, len(ep.ProviderSpecific))
 	normalized := make(endpoint.ProviderSpecific, 0, len(ep.ProviderSpecific))
 	for _, property := range ep.ProviderSpecific {
@@ -232,6 +246,9 @@ func normalizeProviderSpecific(ep *endpoint.Endpoint, desired bool) error {
 			if value != "true" && value != "false" {
 				return fmt.Errorf("providerSpecific alias must be true or false, got %q", property.Value)
 			}
+			if ownershipTXT {
+				continue
+			}
 			if ep.RecordType != endpoint.RecordTypeCNAME {
 				return fmt.Errorf("providerSpecific alias is only supported for CNAME endpoints")
 			}
@@ -245,7 +262,19 @@ func normalizeProviderSpecific(ep *endpoint.Endpoint, desired bool) error {
 			if property.Value != providerSpecificTTLDriftEnabled {
 				return fmt.Errorf("invalid provider-internal TTL drift marker %q", property.Value)
 			}
+			if ownershipTXT {
+				continue
+			}
 			normalized = append(normalized, property)
+		case providerSpecificTXTForceUpdate:
+			if desired {
+				return fmt.Errorf("providerSpecific property %q is registry-internal", property.Name)
+			}
+			if !strings.EqualFold(strings.TrimSpace(property.Value), "true") {
+				return fmt.Errorf("invalid registry-internal force-update marker %q", property.Value)
+			}
+			// This is an ExternalDNS planner control marker, not Porkbun state.
+			// Accept it on current endpoints and remove it before record matching.
 		default:
 			return fmt.Errorf("unsupported providerSpecific property %q", property.Name)
 		}
@@ -253,6 +282,12 @@ func normalizeProviderSpecific(ep *endpoint.Endpoint, desired bool) error {
 	ep.ProviderSpecific = normalized
 	sortProviderSpecific(ep)
 	return nil
+}
+
+func isRegistryOwnershipTXT(ep *endpoint.Endpoint) bool {
+	return ep != nil &&
+		ep.RecordType == endpoint.RecordTypeTXT &&
+		strings.TrimSpace(ep.Labels[endpoint.OwnedRecordLabelKey]) != ""
 }
 
 // validateChanges canonicalizes and validates the complete batch before
@@ -287,6 +322,15 @@ func (p *Provider) validateChanges(changes *plan.Changes) error {
 		if oldEP.DNSName != newEP.DNSName || oldEP.RecordType != newEP.RecordType {
 			return validationErrorf("update[%d] changes identity from %s/%s to %s/%s", i, oldEP.DNSName, oldEP.RecordType, newEP.DNSName, newEP.RecordType)
 		}
+	}
+	if err := validateRegistryCreateLayout(changes.Create); err != nil {
+		return validationErrorf("create layout: %v", err)
+	}
+	if _, _, err := registryDeletePairs(changes.Delete); err != nil {
+		return validationErrorf("delete layout: %v", err)
+	}
+	if _, _, err := registryUpdatePairs(changes.UpdateOld, changes.UpdateNew); err != nil {
+		return validationErrorf("update layout: %v", err)
 	}
 	return nil
 }
@@ -346,6 +390,12 @@ func (p *Provider) validateEndpoint(ep *endpoint.Endpoint, desired bool) error {
 		ep.Targets[i] = canonical
 	}
 	sort.Strings(ep.Targets)
+	if desired && ep.RecordType == endpoint.RecordTypeCNAME && len(seen) > 1 {
+		return fmt.Errorf("CNAME and ALIAS endpoints support exactly one distinct target, got %d", len(seen))
+	}
+	if isRegistryOwnershipTXT(ep) && len(ep.Targets) != 1 {
+		return fmt.Errorf("generated ownership TXT endpoints support exactly one target, got %d", len(ep.Targets))
+	}
 	return nil
 }
 

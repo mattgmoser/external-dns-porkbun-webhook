@@ -9,5 +9,6 @@ Check both containers:
   kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/instance={{ .Release.Name }} -c external-dns
   kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/instance={{ .Release.Name }} -c webhook
 
-Keep external-dns.txtOwnerId and external-dns.txtPrefix stable after records
-have been created. Restart the Deployment after rotating Porkbun credentials.
+Keep external-dns.txtOwnerId, external-dns.txtPrefix, and
+external-dns.extraArgs.txt-wildcard-replacement stable after records have been
+created. Restart the Deployment after rotating Porkbun credentials.

@@ -1,6 +1,16 @@
 {{- $migration := .Values.migration | default dict -}}
 {{- $acknowledgement := $migration.acknowledgeControllerReplacement | default false -}}
 {{- $acknowledged := and (kindIs "bool" $acknowledgement) $acknowledgement -}}
-{{- if and .Release.IsUpgrade (not $acknowledged) -}}
+{{- $stateName := printf "%s-porkbun-migration-state" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- $state := lookup "v1" "ConfigMap" .Release.Namespace $stateName -}}
+{{- $stateOwned := false -}}
+{{- if $state -}}
+  {{- $annotations := $state.metadata.annotations | default dict -}}
+  {{- $stateOwned = and
+        (eq (index $annotations "meta.helm.sh/release-name" | default "") .Release.Name)
+        (eq (index $annotations "meta.helm.sh/release-namespace" | default "") .Release.Namespace)
+        (eq (index ($state.data | default dict) "topology" | default "") "official-external-dns-same-pod-sidecar") -}}
+{{- end -}}
+{{- if and .Release.IsUpgrade (not $stateOwned) (not $acknowledged) -}}
 {{- fail "chart 0.4.0 changes this release from webhook-only to a complete ExternalDNS deployment; before any in-place upgrade, preserve TXT ownership settings, ensure no second writable controller will remain, and set migration.acknowledgeControllerReplacement=true (the safer legacy migration is uninstall then install)" -}}
 {{- end -}}

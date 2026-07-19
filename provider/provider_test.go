@@ -26,13 +26,19 @@ import (
 // fakePorkbun is a small in-memory mock of the Porkbun JSON API enough for the
 // provider tests.
 type fakePorkbun struct {
-	mu             sync.Mutex
-	records        map[string]porkbun.Record // by id
-	nextID         atomic.Int64
-	calls          atomic.Int32
-	failCreate     atomic.Bool
-	beforeRetrieve func()
-	afterDelete    func()
+	mu                sync.Mutex
+	records           map[string]porkbun.Record // by id
+	nextID            atomic.Int64
+	calls             atomic.Int32
+	failCreate        atomic.Bool
+	failCreateType    atomic.Value
+	failCreateContent atomic.Value
+	failDeleteType    atomic.Value
+	failDeleteContent atomic.Value
+	failEditType      atomic.Value
+	failEditContent   atomic.Value
+	beforeRetrieve    func()
+	afterDelete       func()
 }
 
 func newFakePorkbun() *fakePorkbun {
@@ -97,14 +103,16 @@ func (f *fakePorkbun) handleRetrieve(w http.ResponseWriter) {
 }
 
 func (f *fakePorkbun) handleCreate(w http.ResponseWriter, r *http.Request) {
-	if f.failCreate.Load() {
-		json.NewEncoder(w).Encode(map[string]string{"status": "ERROR", "message": "forced create failure"})
-		return
-	}
 	var body struct {
 		Name, Type, Content, TTL, Prio string
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	failType, _ := f.failCreateType.Load().(string)
+	failContent, _ := f.failCreateContent.Load().(string)
+	if f.failCreate.Load() || failType == body.Type || failContent == body.Content {
+		json.NewEncoder(w).Encode(map[string]string{"status": "ERROR", "message": "forced create failure"})
+		return
+	}
 	f.mu.Lock()
 	id := f.nextID.Add(1)
 	rec := porkbun.Record{
@@ -121,6 +129,14 @@ func (f *fakePorkbun) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 func (f *fakePorkbun) handleDelete(w http.ResponseWriter, id string) {
 	f.mu.Lock()
+	record := f.records[id]
+	failType, _ := f.failDeleteType.Load().(string)
+	failContent, _ := f.failDeleteContent.Load().(string)
+	if (failType != "" && failType == record.Type) || (failContent != "" && failContent == record.Content) {
+		f.mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]string{"status": "ERROR", "message": "forced delete failure"})
+		return
+	}
 	delete(f.records, id)
 	f.mu.Unlock()
 	if f.afterDelete != nil {
@@ -132,6 +148,12 @@ func (f *fakePorkbun) handleDelete(w http.ResponseWriter, id string) {
 func (f *fakePorkbun) handleEdit(w http.ResponseWriter, r *http.Request, id string) {
 	var body struct{ Name, Type, Content, TTL, Prio string }
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	failType, _ := f.failEditType.Load().(string)
+	failContent, _ := f.failEditContent.Load().(string)
+	if (failType != "" && failType == body.Type) || (failContent != "" && failContent == body.Content) {
+		json.NewEncoder(w).Encode(map[string]string{"status": "ERROR", "message": "forced edit failure"})
+		return
+	}
 	f.mu.Lock()
 	if rec, ok := f.records[id]; ok {
 		if body.Type != "" {
@@ -596,6 +618,34 @@ func TestAdjustEndpointsCanonicalizesBeforeV021Planner(t *testing.T) {
 	}
 }
 
+func TestCNAMERejectsMultipleDistinctTargetsBeforeWrites(t *testing.T) {
+	fake := newFakePorkbun()
+	prov := newTestProvider(t, fake)
+
+	desired := &endpoint.Endpoint{
+		DNSName: "multi.example.com", RecordType: endpoint.RecordTypeCNAME,
+		Targets: []string{"one.example.net", "two.example.net"},
+	}
+	if _, err := prov.AdjustEndpoints([]*endpoint.Endpoint{desired.DeepCopy()}); err == nil {
+		t.Fatal("AdjustEndpoints accepted a multi-target CNAME")
+	}
+
+	err := prov.ApplyChanges(context.Background(), &plan.Changes{Create: []*endpoint.Endpoint{desired.DeepCopy()}})
+	var validationErr *ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("expected ValidationError, got %T: %v", err, err)
+	}
+	if calls := fake.calls.Load(); calls != 0 {
+		t.Fatalf("multi-target CNAME made %d API calls", calls)
+	}
+
+	// Current/delete endpoints remain readable so legacy invalid state can be
+	// repaired instead of making every reconciliation fail validation.
+	if err := prov.validateEndpoint(desired.DeepCopy(), false); err != nil {
+		t.Fatalf("current multi-target CNAME could not be inspected for cleanup: %v", err)
+	}
+}
+
 func TestServiceBindingCanonicalizationIsStrictAndLossless(t *testing.T) {
 	valid := map[string]string{
 		`1 . key65400="alpha  beta"`:                      `1 . key65400="alpha\ \ beta"`,
@@ -781,6 +831,13 @@ func TestApplyChangesPrevalidatesEntireBatchWithoutAPICalls(t *testing.T) {
 	valid := &endpoint.Endpoint{
 		DNSName: "valid.example.com", RecordType: "A", Targets: []string{"192.0.2.1"}, RecordTTL: 600,
 	}
+	ownership := func(name, ownedName string, withLabel bool) *endpoint.Endpoint {
+		ep := endpoint.NewEndpoint(name, endpoint.RecordTypeTXT, "heritage=external-dns,external-dns/owner=test")
+		if withLabel {
+			ep.Labels[endpoint.OwnedRecordLabelKey] = ownedName
+		}
+		return ep
+	}
 	cases := map[string]*plan.Changes{
 		"nil endpoint": {
 			Create: []*endpoint.Endpoint{nil},
@@ -802,6 +859,9 @@ func TestApplyChangesPrevalidatesEntireBatchWithoutAPICalls(t *testing.T) {
 		},
 		"invalid MX": {
 			Create: []*endpoint.Endpoint{{DNSName: "x.example.com", RecordType: "MX", Targets: []string{"mail.example.com"}}},
+		},
+		"multi-target CNAME": {
+			Create: []*endpoint.Endpoint{{DNSName: "x.example.com", RecordType: "CNAME", Targets: []string{"one.example.net", "two.example.net"}}},
 		},
 		"no targets": {
 			Create: []*endpoint.Endpoint{{DNSName: "x.example.com", RecordType: "TXT"}},
@@ -845,6 +905,28 @@ func TestApplyChangesPrevalidatesEntireBatchWithoutAPICalls(t *testing.T) {
 		"update identity mismatch": {
 			UpdateOld: []*endpoint.Endpoint{valid},
 			UpdateNew: []*endpoint.Endpoint{{DNSName: "other.example.com", RecordType: "A", Targets: []string{"192.0.2.1"}}},
+		},
+		"ownership create before primary": {
+			Create: []*endpoint.Endpoint{ownership("external-dns-a.valid.example.com", "valid.example.com", true), valid.DeepCopy()},
+		},
+		"ownership create without matching primary": {
+			Create: []*endpoint.Endpoint{valid.DeepCopy(), ownership("external-dns-a.other.example.com", "other.example.com", true)},
+		},
+		"ownership-only delete": {
+			Delete: []*endpoint.Endpoint{ownership("external-dns-a.valid.example.com", "valid.example.com", true)},
+		},
+		"mismatched ownership delete": {
+			Delete: []*endpoint.Endpoint{valid.DeepCopy(), ownership("external-dns-a.other.example.com", "other.example.com", true)},
+		},
+		"ownership update missing from new suffix": {
+			UpdateOld: []*endpoint.Endpoint{
+				valid.DeepCopy(),
+				ownership("external-dns-a.valid.example.com", "valid.example.com", true),
+			},
+			UpdateNew: []*endpoint.Endpoint{
+				valid.DeepCopy(),
+				ownership("external-dns-a.valid.example.com", "valid.example.com", false),
+			},
 		},
 	}
 
@@ -1275,38 +1357,46 @@ func TestApplyChangesSerializesConcurrentCreateReplay(t *testing.T) {
 	}
 }
 
-func TestApplyFailureInvalidatesCachePopulatedMidApply(t *testing.T) {
+func TestRecordsWaitsForApplyAndCannotCacheIntermediateState(t *testing.T) {
 	fake := newFakePorkbun()
 	fake.seed(porkbun.Record{ID: "old", Name: "cache.example.com", Type: "A", Content: "192.0.2.1", TTL: "600"})
 	prov := newTestProvider(t, fake)
 	prov.cache = newRecordCache(time.Hour)
-	fake.failCreate.Store(true)
 
-	midApplyRecords := make(chan error, 1)
+	recordsStarted := make(chan struct{})
+	recordsDone := make(chan struct{})
+	var recordsReturnedDuringApply atomic.Bool
+	var records []*endpoint.Endpoint
+	var recordsErr error
 	fake.afterDelete = func() {
-		_, err := prov.Records(context.Background())
-		midApplyRecords <- err
+		go func() {
+			close(recordsStarted)
+			records, recordsErr = prov.Records(context.Background())
+			close(recordsDone)
+		}()
+		<-recordsStarted
+		select {
+		case <-recordsDone:
+			recordsReturnedDuringApply.Store(true)
+		case <-time.After(75 * time.Millisecond):
+		}
 	}
-	err := prov.ApplyChanges(context.Background(), &plan.Changes{
+	if err := prov.ApplyChanges(context.Background(), &plan.Changes{
 		UpdateOld: []*endpoint.Endpoint{{DNSName: "cache.example.com", RecordType: "A", Targets: []string{"192.0.2.1"}, RecordTTL: 600}},
 		UpdateNew: []*endpoint.Endpoint{{DNSName: "cache.example.com", RecordType: "A", Targets: []string{"192.0.2.2"}, RecordTTL: 600}},
-	})
-	if err == nil {
-		t.Fatal("forced create failure unexpectedly succeeded")
-	}
-	if err := <-midApplyRecords; err != nil {
-		t.Fatalf("mid-apply Records failed: %v", err)
-	}
-
-	// The mid-apply read cached the temporary empty state. A deferred
-	// invalidation must discard it even though the apply returned an error.
-	fake.seed(porkbun.Record{Name: "visible.example.com", Type: "A", Content: "192.0.2.99", TTL: "600"})
-	eps, err := prov.Records(context.Background())
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(eps) != 1 || eps[0].DNSName != "visible.example.com" {
-		t.Fatalf("failure path reused a mid-apply cache snapshot: %+v", eps)
+	<-recordsDone
+	if recordsReturnedDuringApply.Load() {
+		t.Fatal("Records returned while ApplyChanges still held an intermediate state")
+	}
+	if recordsErr != nil {
+		t.Fatalf("Records failed after ApplyChanges completed: %v", recordsErr)
+	}
+	if len(records) != 1 || records[0].DNSName != "cache.example.com" ||
+		len(records[0].Targets) != 1 || records[0].Targets[0] != "192.0.2.2" {
+		t.Fatalf("Records observed an intermediate state instead of the completed update: %+v", records)
 	}
 }
 

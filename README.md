@@ -57,8 +57,9 @@ Change all of these in `external-dns-porkbun-values.yaml` before installing:
 - `PORKBUN_DOMAIN`, `DOMAIN_FILTER`, and `domainFilters`
 - `txtOwnerId` to a stable, unique cluster identifier
 - `txtPrefix` if another ExternalDNS instance already owns records in the zone
+- `txt-wildcard-replacement` if `_wildcard` is a real first label in the zone
 
-Never change `txtOwnerId` or `txtPrefix` casually after ExternalDNS has created records; those fields are its ownership boundary. If this is an upgrade, preserve the values already used by the cluster.
+Never change `txtOwnerId`, `txtPrefix`, or `txt-wildcard-replacement` casually after ExternalDNS has created records; those fields are its ownership boundary. If this is an upgrade, preserve the values already used by the cluster. For a new installation, the `_wildcard` default keeps generated ownership records valid; choose a different stable token if it could collide with a real first label.
 
 ```sh
 helm upgrade --install external-dns \
@@ -88,14 +89,14 @@ Porkbun stores TXT content as one unquoted string. The webhook removes one match
 
 Chart `0.3.0` and earlier deployed only the webhook in a separate Pod and exposed its unauthenticated mutation API through a ClusterIP Service. Those immutable releases remain available for history and are unsupported; `0.3.0` is explicitly marked deprecated. Chart `0.4.0` replaces that topology with the official ExternalDNS chart and the same-Pod sidecar described above, so the latest Artifact Hub package is active again without weakening the security boundary.
 
-Do not use the generic install command above to migrate an existing standalone-chart release. First preserve the separately managed controller's `txtOwnerId`, `txtPrefix`, domain filters, and policy. If the old chart created credentials from inline `porkbun.apiKey` values, create an independently managed Secret before uninstalling or upgrading it—preferably with a rotated Porkbun key—because either operation removes that chart-owned Secret from the release. If it used `porkbun.existingSecret`, verify that Secret still exists and is not owned by the legacy Helm release.
+Do not use the generic install command above to migrate an existing standalone-chart release. First preserve the separately managed controller's `txtOwnerId`, `txtPrefix`, `txt-wildcard-replacement`, domain filters, and policy. If the old chart created credentials from inline `porkbun.apiKey` values, create an independently managed Secret under a different name before uninstalling or upgrading it—preferably with a rotated Porkbun key—and point the new values at that name. Reusing the legacy Secret name does not protect it: either operation removes that chart-owned Secret from the release. If the old chart used `porkbun.existingSecret`, verify that Secret still exists and is not owned by the legacy Helm release.
 
 Choose one controller path:
 
 - If ExternalDNS is already managed directly with the official chart, keep that release. Add this project's version-pinned [`docs/external-dns-values.yaml`](docs/external-dns-values.yaml) sidecar settings to it, roll out the same-Pod configuration, and then remove the old standalone webhook release.
 - To adopt this wrapper, stop and remove the separately managed ExternalDNS controller and the old standalone webhook release, then install `0.4.0` with the preserved ownership settings and independent credential Secret. Never overlap two writable controllers for the same names.
 
-As a final guard, `0.4.0` rejects every in-place Helm upgrade unless `migration.acknowledgeControllerReplacement=true` is explicitly set. That acknowledgement only confirms that you completed the controller handoff; it does not perform the migration.
+As a final guard, the first in-place Helm upgrade from `0.3.0` or earlier is rejected unless `migration.acknowledgeControllerReplacement=true` is explicitly set. That acknowledgement only confirms that you completed the controller handoff; it does not perform the migration. A fresh `0.4.0` install or an acknowledged migration creates a release-owned topology marker, so later routine upgrades of that release do not need the acknowledgement again.
 
 ## Configuration
 
@@ -134,7 +135,7 @@ External-DNS reconciles cluster-state into desired DNS records. For Porkbun (not
 
 ### Supported record types
 
-The provider round-trips every DNS type currently accepted by Porkbun: `A`, `AAAA`, `CNAME`, `TXT`, `MX`, `NS`, `SRV`, `TLSA`, `CAA`, `SSHFP`, `HTTPS`, and `SVCB`. Porkbun `ALIAS` records are presented to ExternalDNS as CNAME endpoints with `providerSpecific.alias=true`; an apex CNAME is automatically stored as `ALIAS`. MX and SRV priorities are translated between ExternalDNS's target syntax and Porkbun's separate `prio` field.
+The provider codec reads and writes every DNS type currently accepted by Porkbun: `A`, `AAAA`, `CNAME`, `TXT`, `MX`, `NS`, `SRV`, `TLSA`, `CAA`, `SSHFP`, `HTTPS`, and `SVCB`. Porkbun `ALIAS` records are presented to ExternalDNS as CNAME endpoints with `providerSpecific.alias=true`; an apex CNAME is automatically stored as `ALIAS`. The chart's `external-dns-%{record_type}.` TXT prefix keeps apex ownership records inside the managed zone, and `_wildcard` replaces an otherwise invalid `*` label in wildcard ownership records, as required by the [ExternalDNS TXT registry](https://kubernetes-sigs.github.io/external-dns/latest/docs/registry/txt/). Preserve established registry settings during upgrades; changing them requires a planned migration. MX and SRV priorities are translated between ExternalDNS's target syntax and Porkbun's separate `prio` field.
 
 ## Endpoints
 

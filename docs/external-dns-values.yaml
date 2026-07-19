@@ -1,6 +1,7 @@
 # Canonical installation values for the official ExternalDNS chart v1.21.1
 # (ExternalDNS v0.21.0). Copy this file and replace every example value before
-# installing. Keep txtOwnerId and txtPrefix stable for the lifetime of a zone.
+# installing. Keep txtOwnerId, txtPrefix, and txt-wildcard-replacement stable
+# for the lifetime of a zone.
 
 provider:
   name: webhook
@@ -86,7 +87,10 @@ domainFilters:
 policy: upsert-only
 registry: txt
 txtOwnerId: change-me
-txtPrefix: external-dns-
+# The record-type template and trailing dot keep ownership TXT records for an
+# apex CNAME/ALIAS inside the managed zone. Never change an established prefix
+# without an explicit registry migration.
+txtPrefix: external-dns-%{record_type}.
 interval: 1m
 logFormat: json
 
@@ -101,6 +105,9 @@ extraArgs:
   webhook-provider-url: http://127.0.0.1:8888
   webhook-provider-read-timeout: 30s
   webhook-provider-write-timeout: 4m30s
+  # Keep this stable and choose a token that cannot be confused with a real
+  # first label. It prevents wildcard ownership TXT names from containing *.
+  txt-wildcard-replacement: _wildcard
 
 # Keep a single writable controller during upgrades. The Porkbun limiter is
 # process-local, so overlapping webhook sidecars would bypass it.
