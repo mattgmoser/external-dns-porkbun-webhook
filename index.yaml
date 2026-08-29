@@ -5,6 +5,72 @@ entries:
       artifacthub.io/category: networking
       artifacthub.io/changes: |
         - kind: security
+          description: Rebuilt the webhook on Go 1.26.7, clearing 8 fixable HIGH Go standard library findings including CVE-2026-33818, CVE-2026-46600, and CVE-2026-56862
+        - kind: security
+          description: Pinned the bundled ExternalDNS controller to the patched v0.22.0 image by digest, removing 55 fixable findings that the v0.21.0 runtime image contributed to this package
+        - kind: changed
+          description: Updated to ExternalDNS v0.22.0 and verified every rendered argument against the v0.22.0 binary
+        - kind: changed
+          description: Pinned annotationPrefix to external-dns.alpha.kubernetes.io/ so the v0.22 annotation-prefix change cannot silently orphan or delete existing records
+        - kind: added
+          description: Chart now fails closed when annotationPrefix or policy is unset or unrecognised, both of which ExternalDNS v0.22 requires explicitly
+      artifacthub.io/containsSecurityUpdates: "true"
+      artifacthub.io/images: |
+        - name: external-dns
+          image: registry.k8s.io/external-dns/external-dns:v0.22.0
+        - name: porkbun-webhook
+          image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:0.5.0
+          platforms:
+            - linux/amd64
+            - linux/arm64
+            - linux/arm/v7
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/links: |
+        - name: source
+          url: https://github.com/mattgmoser/external-dns-porkbun-webhook
+        - name: external-dns
+          url: https://github.com/kubernetes-sigs/external-dns
+        - name: porkbun api
+          url: https://porkbun.com/api/json/v3/documentation
+        - name: support
+          url: https://github.com/mattgmoser/external-dns-porkbun-webhook/issues
+      artifacthub.io/recommendations: |
+        - url: https://artifacthub.io/packages/helm/external-dns/external-dns
+      artifacthub.io/signKey: |
+        fingerprint: 1CD080E5799F3F24960E791966B9EDBB9FE0C877
+        url: https://github.com/mattgmoser/external-dns-porkbun-webhook/raw/main/charts/external-dns-porkbun-webhook/keys/66B9EDBB9FE0C877.asc
+    apiVersion: v2
+    appVersion: 0.5.0
+    created: "2026-08-29T16:15:04.162838147Z"
+    dependencies:
+    - name: external-dns
+      repository: https://kubernetes-sigs.github.io/external-dns/
+      version: 1.21.1
+    description: ExternalDNS with the Porkbun webhook installed as a secure same-Pod
+      sidecar
+    digest: 23b5375daf346304361cb9f0bdac744e9560494fbad9b5c7a3385090958f66fa
+    home: https://github.com/mattgmoser/external-dns-porkbun-webhook
+    icon: https://raw.githubusercontent.com/kubernetes-sigs/external-dns/master/docs/img/external-dns.png
+    keywords:
+    - external-dns
+    - porkbun
+    - dns
+    - webhook
+    kubeVersion: '>=1.24.0-0'
+    maintainers:
+    - name: mattgmoser
+      url: https://github.com/mattgmoser
+    name: external-dns-porkbun-webhook
+    sources:
+    - https://github.com/mattgmoser/external-dns-porkbun-webhook
+    type: application
+    urls:
+    - https://github.com/mattgmoser/external-dns-porkbun-webhook/releases/download/external-dns-porkbun-webhook-0.5.0/external-dns-porkbun-webhook-0.5.0.tgz
+    version: 0.5.0
+  - annotations:
+      artifacthub.io/category: networking
+      artifacthub.io/changes: |
+        - kind: security
           description: Updated golang.org/x/net and golang.org/x/text to remove CVE-2026-46600 and CVE-2026-56852 from the webhook image
         - kind: security
           description: Added a pre-publication Go binary gate and a final immutable-image gate that reject fixable findings across every published architecture
@@ -414,4 +480,4 @@ entries:
     urls:
     - https://github.com/mattgmoser/external-dns-porkbun-webhook/releases/download/external-dns-porkbun-webhook-0.1.0/external-dns-porkbun-webhook-0.1.0.tgz
     version: 0.1.0
-generated: "2026-07-19T03:53:11.043863865Z"
+generated: "2026-08-29T16:15:04.162884463Z"
