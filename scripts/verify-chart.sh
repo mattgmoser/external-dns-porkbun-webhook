@@ -65,6 +65,8 @@ require_literal '        - name: webhook'
 require_literal '              value: 127.0.0.1:8888'
 require_literal '      targetPort: http-webhook'
 require_literal '  topology: official-external-dns-same-pod-sidecar'
+require_literal 'image: registry.k8s.io/external-dns/external-dns:v0.22.0@sha256:'
+require_literal '            - --annotation-prefix=external-dns.alpha.kubernetes.io/'
 
 if grep -Eq '^[[:space:]]+(port|containerPort):[[:space:]]+8888$' "$rendered_wrapper"; then
   echo 'provider port 8888 must not be exposed by a Service or declared as a public container port' >&2
@@ -171,9 +173,56 @@ if helm template external-dns "$chart_dir" \
   exit 1
 fi
 
+# The dependency chart's own default image is the vulnerable 0.21.0 runtime, so
+# any override that unpins the controller must fail rather than silently
+# downgrade it.
+controller_image_overrides=(
+  'external-dns.image.tag='
+  'external-dns.image.tag=v0.21.0'
+  'external-dns.image.tag=v0.22.0'
+  'external-dns.image.tag=latest'
+  'external-dns.image.repository=example.invalid/external-dns'
+)
+for override in "${controller_image_overrides[@]}"; do
+  if helm template external-dns "$chart_dir" \
+    --namespace external-dns \
+    --values "$wrapper_values" \
+    --set-string "$override" >/dev/null 2>&1; then
+    echo "unpinned controller image must be rejected: $override" >&2
+    exit 1
+  fi
+done
+
+# The annotation prefix decides which annotations ExternalDNS honours. An unset
+# or unrecognised value must never reach a cluster.
+annotation_prefix_overrides=(
+  'external-dns.annotationPrefix='
+  'external-dns.annotationPrefix=external-dns.alpha.kubernetes.io'
+  'external-dns.annotationPrefix= external-dns.alpha.kubernetes.io/'
+  'external-dns.annotationPrefix=external-dns.alpha.kubernetes.io/ '
+  'external-dns.annotationPrefix=Not A Prefix/'
+  'external-dns.policy='
+)
+for override in "${annotation_prefix_overrides[@]}"; do
+  if helm template external-dns "$chart_dir" \
+    --namespace external-dns \
+    --values "$wrapper_values" \
+    --set-string "$override" >/dev/null 2>&1; then
+    echo "unsafe annotation prefix or policy must be rejected: $override" >&2
+    exit 1
+  fi
+done
+
 # The wrapper's security boundary depends on the mutating webhook remaining on
 # loopback and the Service targeting only the separate ops listener. Reject
 # overrides that would expose mutations or disconnect probes and metrics.
+# A valid custom prefix must remain usable. Forcing a split-horizon release onto
+# one of the upstream spellings would hide its annotations and cause deletions.
+helm template external-dns "$chart_dir" \
+  --namespace external-dns \
+  --values "$wrapper_values" \
+  --set-string 'external-dns.annotationPrefix=internal.example.com/' >/dev/null
+
 listener_overrides=(
   'external-dns.provider.webhook.env[4].value=:8080'
   'external-dns.provider.webhook.env[4].value=0.0.0.0:8888'

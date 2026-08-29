@@ -139,21 +139,59 @@ The provider codec reads and writes every DNS type currently accepted by Porkbun
 
 `DNAME`, added to ExternalDNS's supported record types in v0.22.0, is deliberately unmanaged because Porkbun has no `DNAME` record type. ExternalDNS only sends the types listed in `--managed-record-types` (default `A`, `AAAA`, `CNAME`), so it is never sent unless you opt in; if you do, the provider rejects it with an explicit validation error rather than silently dropping the record.
 
+### Upgrading
+
+The quickstart exports the chart's values to a file you keep. That file pins
+`external-dns.provider.webhook.image.tag`, so re-using it unchanged across a
+chart upgrade keeps the **old webhook image**, including for a security
+release. Re-export the values on upgrade, or bump that tag by hand, and diff
+your copy against the new defaults:
+
+```sh
+helm show values edns-porkbun/external-dns-porkbun-webhook --version 0.5.0 \
+  | diff -u external-dns-porkbun-values.yaml - || true
+```
+
+The chart pins the bundled ExternalDNS controller image to an exact digest and
+refuses to render if that pin is removed or replaced with a floating tag,
+because the dependency chart's own default is the older, vulnerable image.
+
 ### Upgrading to ExternalDNS v0.22.0
 
 ExternalDNS v0.22.0 changed the default annotation prefix to `external-dns.kubernetes.io/` **with no fallback**, and made `--policy` a required flag. A release that still annotates with `external-dns.alpha.kubernetes.io/` would stop being seen by the controller after the change, and under `policy: sync` the planner deletes the records behind those hostnames.
 
 This chart therefore pins `external-dns.annotationPrefix` to `external-dns.alpha.kubernetes.io/`, so upgrading is behaviour preserving, and rejects an unset, malformed, or unrecognised prefix at render time. Resources that take their hostname from an Ingress `spec.rules[].host` are unaffected either way, because that path does not involve annotations.
 
-To move to the new prefix, migrate your annotations first, then set it deliberately:
+To move to the new prefix, migrate your annotations first, then set it deliberately as a separate change, after the upgrade has settled:
 
 ```sh
-helm upgrade edns-porkbun edns-porkbun/external-dns-porkbun-webhook \
-  --reuse-values \
-  --set external-dns.annotationPrefix=external-dns.kubernetes.io/
+helm upgrade external-dns edns-porkbun/external-dns-porkbun-webhook \
+  --version 0.5.0 \
+  --values external-dns-porkbun-values.yaml \
+  --set-string external-dns.annotationPrefix=external-dns.kubernetes.io/
 ```
 
-Consider running once with `--set external-dns.provider.webhook.env[9].value=true` (`DRY_RUN`) or ExternalDNS's own `--dry-run` first, as upstream's [version update playbook](https://kubernetes-sigs.github.io/external-dns/latest/docs/version-update-playbook/) recommends.
+Do not use `--reuse-values` for this upgrade. It replaces the new chart's defaults with the previous release's values, so the release would report chart `0.5.0` while still running the **old** ExternalDNS and webhook images -- defeating the point of a security release. Pass your values file explicitly, as above.
+
+Upstream's [version update playbook](https://kubernetes-sigs.github.io/external-dns/latest/docs/version-update-playbook/) recommends a dry run first. Set `DRY_RUN` in your values file rather than with `--set`, because a bare `--set ...value=true` renders a YAML boolean and Kubernetes requires `EnvVar.value` to be a string:
+
+```yaml
+external-dns:
+  provider:
+    webhook:
+      env:
+        - name: DRY_RUN
+          value: "true"
+```
+
+#### Source prerequisites
+
+Two v0.22.0 source migrations are **not** guarded by this chart, because they depend on CRDs it does not install. Check these before upgrading if you use them:
+
+- `gateway-tlsroute` now requires Gateway API `v1` `TLSRoute` (standard channel since Gateway API v1.5.0). On older CRDs the informer never syncs and DNS reconciliation stops silently.
+- `ambassador-host` now requires `getambassador.io/v3alpha1`.
+
+The chart's default sources are `ingress` and `service`, neither of which is affected.
 
 ## Endpoints
 

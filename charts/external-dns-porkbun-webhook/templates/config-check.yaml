@@ -66,23 +66,49 @@
 {{- fail "set external-dns.txtOwnerId to a stable value unique to this controller; change-me is not installable" -}}
 {{- end -}}
 {{- /*
-ExternalDNS 0.22.0 removed the annotation-prefix fallback. An empty value here
-would silently hand the controller the new default, so a release that still
-uses alpha annotations would stop seeing its own hostnames and, under
-policy=sync, delete the records behind them. Require one of the two real
-prefixes so the choice is always explicit and always spelled correctly.
+Validate the raw value. The dependency renders this verbatim, so trimming here
+would let " external-dns.alpha.kubernetes.io/" pass while the controller looks
+for annotation keys that begin with a space. ExternalDNS only requires a
+trailing /, so it would accept that silently, every annotation-derived endpoint
+would vanish from the desired set, and policy=sync would delete the records.
+
+Any DNS-subdomain prefix is allowed, not just the two upstream spellings: a
+split-horizon release may legitimately run a custom prefix, and forcing it onto
+one of ours would hide its annotations and cause the very deletion this guards.
 */ -}}
-{{- $annotationPrefix := index $externalDNS "annotationPrefix" | default "" | trim -}}
+{{- $annotationPrefix := index $externalDNS "annotationPrefix" | default "" -}}
+{{- if not (kindIs "string" $annotationPrefix) -}}
+{{- fail (printf "external-dns.annotationPrefix must be a string, got %s" (kindOf $annotationPrefix)) -}}
+{{- end -}}
 {{- if empty $annotationPrefix -}}
-{{- fail "set external-dns.annotationPrefix explicitly; ExternalDNS 0.22 removed the annotation-prefix fallback, so an unset value silently changes which annotations are honoured" -}}
+{{- fail "set external-dns.annotationPrefix explicitly; ExternalDNS 0.22 removed the annotation-prefix fallback, so an unset value silently changes which annotations are honoured. Use external-dns.alpha.kubernetes.io/ to preserve existing behaviour, or external-dns.kubernetes.io/ once annotations are migrated" -}}
+{{- end -}}
+{{- if ne $annotationPrefix (trim $annotationPrefix) -}}
+{{- fail (printf "external-dns.annotationPrefix %q has surrounding whitespace; it is passed to the controller verbatim, so the prefix would never match a real annotation key" $annotationPrefix) -}}
 {{- end -}}
 {{- if not (hasSuffix "/" $annotationPrefix) -}}
 {{- fail (printf "external-dns.annotationPrefix %q must end with / so it concatenates onto annotation names correctly" $annotationPrefix) -}}
 {{- end -}}
-{{- if not (has $annotationPrefix (list "external-dns.alpha.kubernetes.io/" "external-dns.kubernetes.io/")) -}}
-{{- fail (printf "external-dns.annotationPrefix %q is not a recognised ExternalDNS prefix; use external-dns.alpha.kubernetes.io/ (established releases) or external-dns.kubernetes.io/ (0.22 default, only after migrating annotations)" $annotationPrefix) -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/$" $annotationPrefix) -}}
+{{- fail (printf "external-dns.annotationPrefix %q must be a DNS subdomain followed by / (for example external-dns.alpha.kubernetes.io/)" $annotationPrefix) -}}
 {{- end -}}
 {{- $policy := index $externalDNS "policy" | default "" | trim -}}
 {{- if empty $policy -}}
 {{- fail "set external-dns.policy explicitly; ExternalDNS 0.22 removed the default and requires the flag" -}}
+{{- end -}}
+{{- /*
+The dependency chart is still 1.21.1, whose appVersion is the ExternalDNS
+0.21.0 image. That image carries fixable HIGH findings, and the subchart falls
+back to it whenever this tag is empty. A coalesced values dump reintroduces
+`image.tag: null`, so an upgrade could silently downgrade the controller to a
+known-vulnerable runtime with no warning. Require an exact digest instead.
+*/ -}}
+{{- $controllerImage := index $externalDNS "image" | default dict -}}
+{{- $controllerRepo := index $controllerImage "repository" | default "" -}}
+{{- $controllerTag := index $controllerImage "tag" | default "" -}}
+{{- if ne $controllerRepo "registry.k8s.io/external-dns/external-dns" -}}
+{{- fail (printf "external-dns.image.repository must remain registry.k8s.io/external-dns/external-dns, got %q" $controllerRepo) -}}
+{{- end -}}
+{{- if not (regexMatch "^v[0-9]+\\.[0-9]+\\.[0-9]+@sha256:[0-9a-f]{64}$" $controllerTag) -}}
+{{- fail (printf "external-dns.image.tag must pin the ExternalDNS controller to an exact digest (vMAJOR.MINOR.PATCH@sha256:...); got %q. An empty or floating tag silently falls back to the dependency chart's 0.21.0 image, which has fixable HIGH vulnerabilities" $controllerTag) -}}
 {{- end -}}
