@@ -222,7 +222,7 @@ func (p *Provider) adjustEndpoint(ep *endpoint.Endpoint, canonicalName string) e
 }
 
 func normalizeProviderSpecific(ep *endpoint.Endpoint, desired bool) error {
-	// ExternalDNS v0.21's TXT registry copies the owned endpoint's provider
+	// ExternalDNS v0.22's TXT registry copies the owned endpoint's provider
 	// metadata onto its generated ownership TXT record. Those properties have no
 	// TXT wire meaning; validating alias=true as if it described the TXT record
 	// would reject an otherwise valid ALIAS plus ownership pair. Restrict this

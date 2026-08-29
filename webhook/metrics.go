@@ -3,10 +3,25 @@ package webhook
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// escapeLabelValue renders a Prometheus label value safely.
+//
+// Every value this package currently emits is already inert: route names are
+// internal constants, codes are integers, and net/http rejects a request line
+// whose method is not a valid token before a handler ever runs. Escaping here
+// keeps that guarantee from depending on those upstream invariants, so a new
+// label dimension cannot silently corrupt the exposition format.
+func escapeLabelValue(v string) string {
+	if !strings.ContainsAny(v, `\"`+"\n") {
+		return v
+	}
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`).Replace(v)
+}
 
 // Metrics is a small lock-light Prometheus metric set.
 //
@@ -86,13 +101,13 @@ func (m *Metrics) Handler() http.Handler {
 		w.Write([]byte("# HELP edns_porkbun_requests_total HTTP requests received by the webhook.\n"))
 		w.Write([]byte("# TYPE edns_porkbun_requests_total counter\n"))
 		for k, v := range mm.requests {
-			w.Write([]byte("edns_porkbun_requests_total{route=\"" + k.route + "\",method=\"" + k.method + "\",code=\"" + strconv.Itoa(k.code) + "\"} " + strconv.FormatUint(v, 10) + "\n"))
+			w.Write([]byte("edns_porkbun_requests_total{route=\"" + escapeLabelValue(k.route) + "\",method=\"" + escapeLabelValue(k.method) + "\",code=\"" + strconv.Itoa(k.code) + "\"} " + strconv.FormatUint(v, 10) + "\n"))
 		}
 
 		w.Write([]byte("# HELP edns_porkbun_request_duration_seconds Webhook HTTP duration histogram.\n"))
 		w.Write([]byte("# TYPE edns_porkbun_request_duration_seconds histogram\n"))
 		for k, h := range mm.duration {
-			labels := "route=\"" + k.route + "\",method=\"" + k.method + "\",code=\"" + strconv.Itoa(k.code) + "\""
+			labels := "route=\"" + escapeLabelValue(k.route) + "\",method=\"" + escapeLabelValue(k.method) + "\",code=\"" + strconv.Itoa(k.code) + "\""
 			h.WriteTo(w, "edns_porkbun_request_duration_seconds", labels)
 		}
 

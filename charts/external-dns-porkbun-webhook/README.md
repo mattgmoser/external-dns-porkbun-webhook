@@ -7,7 +7,7 @@ mutation API binds only to `127.0.0.1:8888`. The Service exposes the separate
 
 Chart `0.4.0` replaces the unsupported standalone topology from earlier
 releases; `0.3.0` is explicitly marked deprecated. It depends on ExternalDNS
-chart `1.21.1` (ExternalDNS `0.21.0`).
+chart `1.21.1`, running the patched ExternalDNS `0.22.0` controller image.
 
 ## Prerequisites
 
@@ -32,7 +32,7 @@ kubectl -n external-dns create secret generic porkbun-creds \
 helm repo add edns-porkbun https://mattgmoser.github.io/external-dns-porkbun-webhook
 helm repo update
 helm show values edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.4.1 > external-dns-porkbun-values.yaml
+  --version 0.5.0 > external-dns-porkbun-values.yaml
 ```
 
 Edit every example value in `external-dns-porkbun-values.yaml`, especially:
@@ -52,7 +52,7 @@ Then install:
 ```sh
 helm upgrade --install external-dns \
   edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.4.1 \
+  --version 0.5.0 \
   --namespace external-dns \
   --values external-dns-porkbun-values.yaml
 ```
@@ -63,7 +63,7 @@ choosing `sync`, which also deletes records no longer desired by Kubernetes.
 ## Values
 
 All provider and controller settings are nested under `external-dns` and are
-passed to the upstream chart. Use `helm show values ... --version 0.4.1` as
+passed to the upstream chart. Use `helm show values ... --version 0.5.0` as
 shown above for this chart's immutable defaults. The dependency's exact
 [`external-dns` values](https://github.com/kubernetes-sigs/external-dns/blob/external-dns-helm-chart-1.21.1/charts/external-dns/values.yaml)
 are also version-pinned.
@@ -99,10 +99,10 @@ Then choose one path:
 
 - Keep an ExternalDNS release already managed through the official chart, add
   this project's
-  [version-pinned sidecar values](https://github.com/mattgmoser/external-dns-porkbun-webhook/blob/v0.4.1/docs/external-dns-values.yaml),
+  [version-pinned sidecar values](https://github.com/mattgmoser/external-dns-porkbun-webhook/blob/v0.5.0/docs/external-dns-values.yaml),
   roll it out, and remove the old standalone webhook release.
 - To adopt this wrapper, stop and remove the separately managed controller and
-  old webhook release, then install `0.4.1` with the preserved ownership values
+  old webhook release, then install `0.5.0` with the preserved ownership values
   and independent Secret.
 
 Never overlap writable controllers for the same names. As a final guard, the

@@ -528,7 +528,7 @@ func TestAdjustEndpointsLeavesOutOfScopeEndpointsUntouched(t *testing.T) {
 	}
 }
 
-func TestAdjustEndpointsCanonicalizesBeforeV021Planner(t *testing.T) {
+func TestAdjustEndpointsCanonicalizesBeforeV022Planner(t *testing.T) {
 	tests := []struct {
 		name        string
 		record      porkbun.Record
@@ -612,7 +612,7 @@ func TestAdjustEndpointsCanonicalizesBeforeV021Planner(t *testing.T) {
 				Policies: []plan.Policy{&plan.SyncPolicy{}}, ManagedRecords: []string{tt.managedType},
 			}).Calculate().Changes
 			if countPlanChanges(changes) != 0 {
-				t.Fatalf("canonical equivalents produced a v0.21 plan: %+v", changes)
+				t.Fatalf("canonical equivalents produced a v0.22 plan: %+v", changes)
 			}
 		})
 	}
@@ -1462,7 +1462,7 @@ func TestMixedTTLRRSetPlansAndConvergesAllTargets(t *testing.T) {
 		Policies: []plan.Policy{&plan.SyncPolicy{}}, ManagedRecords: []string{"A"},
 	}).Calculate().Changes
 	if len(firstPlan.UpdateOld) != 1 || len(firstPlan.UpdateNew) != 1 {
-		t.Fatalf("v0.21 planner did not surface mixed TTL drift: %+v", firstPlan)
+		t.Fatalf("v0.22 planner did not surface mixed TTL drift: %+v", firstPlan)
 	}
 	if err := prov.ApplyChanges(context.Background(), firstPlan); err != nil {
 		t.Fatal(err)
@@ -1482,7 +1482,7 @@ func TestMixedTTLRRSetPlansAndConvergesAllTargets(t *testing.T) {
 		Policies: []plan.Policy{&plan.SyncPolicy{}}, ManagedRecords: []string{"A"},
 	}).Calculate().Changes
 	if countPlanChanges(secondPlan) != 0 {
-		t.Fatalf("second v0.21 plan was not empty: %+v", secondPlan)
+		t.Fatalf("second v0.22 plan was not empty: %+v", secondPlan)
 	}
 }
 
@@ -1510,7 +1510,7 @@ func TestRawSubMinimumTTLPlansAndConverges(t *testing.T) {
 				Policies: []plan.Policy{&plan.SyncPolicy{}}, ManagedRecords: []string{"A"},
 			}).Calculate().Changes
 			if len(firstPlan.UpdateOld) != 1 || len(firstPlan.UpdateNew) != 1 {
-				t.Fatalf("v0.21 planner missed raw TTL %s: %+v", rawTTL, firstPlan)
+				t.Fatalf("v0.22 planner missed raw TTL %s: %+v", rawTTL, firstPlan)
 			}
 			if err := prov.ApplyChanges(context.Background(), firstPlan); err != nil {
 				t.Fatal(err)
@@ -1558,7 +1558,7 @@ func TestWhitespacePaddedPorkbunTTLDoesNotCreateFalseDrift(t *testing.T) {
 		Policies: []plan.Policy{&plan.SyncPolicy{}}, ManagedRecords: []string{"A"},
 	}).Calculate().Changes
 	if countPlanChanges(changes) != 0 {
-		t.Fatalf("padded valid TTL created a v0.21 plan: %+v", changes)
+		t.Fatalf("padded valid TTL created a v0.22 plan: %+v", changes)
 	}
 }
 

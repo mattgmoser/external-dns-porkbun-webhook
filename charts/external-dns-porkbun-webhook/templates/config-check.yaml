@@ -65,3 +65,24 @@
 {{- if or (empty $txtOwnerID) (eq (lower $txtOwnerID) "change-me") -}}
 {{- fail "set external-dns.txtOwnerId to a stable value unique to this controller; change-me is not installable" -}}
 {{- end -}}
+{{- /*
+ExternalDNS 0.22.0 removed the annotation-prefix fallback. An empty value here
+would silently hand the controller the new default, so a release that still
+uses alpha annotations would stop seeing its own hostnames and, under
+policy=sync, delete the records behind them. Require one of the two real
+prefixes so the choice is always explicit and always spelled correctly.
+*/ -}}
+{{- $annotationPrefix := index $externalDNS "annotationPrefix" | default "" | trim -}}
+{{- if empty $annotationPrefix -}}
+{{- fail "set external-dns.annotationPrefix explicitly; ExternalDNS 0.22 removed the annotation-prefix fallback, so an unset value silently changes which annotations are honoured" -}}
+{{- end -}}
+{{- if not (hasSuffix "/" $annotationPrefix) -}}
+{{- fail (printf "external-dns.annotationPrefix %q must end with / so it concatenates onto annotation names correctly" $annotationPrefix) -}}
+{{- end -}}
+{{- if not (has $annotationPrefix (list "external-dns.alpha.kubernetes.io/" "external-dns.kubernetes.io/")) -}}
+{{- fail (printf "external-dns.annotationPrefix %q is not a recognised ExternalDNS prefix; use external-dns.alpha.kubernetes.io/ (established releases) or external-dns.kubernetes.io/ (0.22 default, only after migrating annotations)" $annotationPrefix) -}}
+{{- end -}}
+{{- $policy := index $externalDNS "policy" | default "" | trim -}}
+{{- if empty $policy -}}
+{{- fail "set external-dns.policy explicitly; ExternalDNS 0.22 removed the default and requires the flag" -}}
+{{- end -}}

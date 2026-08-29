@@ -2,8 +2,8 @@ apiVersion: v2
 name: external-dns-porkbun-webhook
 description: ExternalDNS with the Porkbun webhook installed as a secure same-Pod sidecar
 type: application
-version: 0.4.1
-appVersion: "0.4.1"
+version: 0.5.0
+appVersion: "0.5.0"
 kubeVersion: ">=1.24.0-0"
 keywords:
   - external-dns
@@ -36,16 +36,20 @@ annotations:
   artifacthub.io/containsSecurityUpdates: "true"
   artifacthub.io/changes: |
     - kind: security
-      description: Updated golang.org/x/net and golang.org/x/text to remove CVE-2026-46600 and CVE-2026-56852 from the webhook image
+      description: Rebuilt the webhook on Go 1.26.7, clearing 8 fixable HIGH Go standard library findings including CVE-2026-33818, CVE-2026-46600, and CVE-2026-56862
     - kind: security
-      description: Added a pre-publication Go binary gate and a final immutable-image gate that reject fixable findings across every published architecture
+      description: Pinned the bundled ExternalDNS controller to the patched v0.22.0 image by digest, removing 55 fixable findings that the v0.21.0 runtime image contributed to this package
     - kind: changed
-      description: Documented that Artifact Hub's package grade aggregates the webhook image with the official ExternalDNS runtime image
+      description: Updated to ExternalDNS v0.22.0 and verified every rendered argument against the v0.22.0 binary
+    - kind: changed
+      description: Pinned annotationPrefix to external-dns.alpha.kubernetes.io/ so the v0.22 annotation-prefix change cannot silently orphan or delete existing records
+    - kind: added
+      description: Chart now fails closed when annotationPrefix or policy is unset or unrecognised, both of which ExternalDNS v0.22 requires explicitly
   artifacthub.io/images: |
     - name: external-dns
-      image: registry.k8s.io/external-dns/external-dns:v0.21.0
+      image: registry.k8s.io/external-dns/external-dns:v0.22.0
     - name: porkbun-webhook
-      image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:0.4.1
+      image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:0.5.0
       platforms:
         - linux/amd64
         - linux/arm64
