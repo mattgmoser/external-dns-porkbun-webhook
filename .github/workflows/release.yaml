@@ -79,8 +79,33 @@ jobs:
           fi
           chart_version="$(awk '$1 == "version:" {print $2; exit}' charts/external-dns-porkbun-webhook/Chart.yaml)"
           app_version="$(awk '$1 == "appVersion:" {gsub(/\"/, "", $2); print $2; exit}' charts/external-dns-porkbun-webhook/Chart.yaml)"
-          example_image_tag="$(awk '$1 == "tag:" {gsub(/\"/, "", $2); print $2; exit}' docs/external-dns-values.yaml)"
-          wrapper_image_tag="$(awk '$1 == "tag:" {gsub(/\"/, "", $2); print $2; exit}' charts/external-dns-porkbun-webhook/values.yaml)"
+          # Anchor to the webhook image block. These files also pin the upstream
+          # ExternalDNS controller image, so the first "tag:" in the file is not
+          # necessarily this project's own tag.
+          webhook_image_tag() {
+            awk '
+              /repository:[[:space:]]*ghcr\.io\/mattgmoser\/external-dns-porkbun-webhook[[:space:]]*$/ { found = 1; next }
+              found && $1 == "tag:" { gsub(/"/, "", $2); print $2; exit }
+            ' "$1"
+          }
+          example_image_tag="$(webhook_image_tag docs/external-dns-values.yaml)"
+          wrapper_image_tag="$(webhook_image_tag charts/external-dns-porkbun-webhook/values.yaml)"
+          if [[ -z "$example_image_tag" || -z "$wrapper_image_tag" ]]; then
+            echo 'could not locate the webhook image tag in the chart or example values' >&2
+            exit 1
+          fi
+          # The bundled controller image must stay pinned to an exact digest so a
+          # published release cannot silently drift onto a different runtime.
+          for values_file in docs/external-dns-values.yaml charts/external-dns-porkbun-webhook/values.yaml; do
+            controller_tag="$(awk '
+              /repository:[[:space:]]*registry\.k8s\.io\/external-dns\/external-dns[[:space:]]*$/ { found = 1; next }
+              found && $1 == "tag:" { gsub(/"/, "", $2); print $2; exit }
+            ' "$values_file")"
+            if [[ ! "$controller_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$ ]]; then
+              echo "$values_file must pin the ExternalDNS controller image to an exact digest, found: ${controller_tag:-<none>}" >&2
+              exit 1
+            fi
+          done
           test "$expected" = "$chart_version"
           test "$expected" = "$app_version"
           test "$expected" = "$example_image_tag"
