@@ -35,11 +35,11 @@ func (a upstreamProviderAdapter) GetDomainFilter() endpoint.DomainFilterInterfac
 	return a.provider.GetDomainFilter()
 }
 
-// TestExternalDNSV021TXTRegistryIntegration exercises the exact registry
-// implementation bundled with ExternalDNS v0.21. It protects integration
+// TestExternalDNSV022TXTRegistryIntegration exercises the exact registry
+// implementation bundled with ExternalDNS v0.22. It protects integration
 // boundaries that provider-only tests cannot see: inherited ALIAS metadata,
 // apex-safe TXT names, and valid ownership names for wildcard records.
-func TestExternalDNSV021TXTRegistryIntegration(t *testing.T) {
+func TestExternalDNSV022TXTRegistryIntegration(t *testing.T) {
 	tests := []struct {
 		name          string
 		dnsName       string
@@ -242,11 +242,11 @@ func TestNormalizeExternalDNSRegistryMetadata(t *testing.T) {
 	})
 }
 
-// ExternalDNS v0.21 marks a current endpoint with txt/force-update when it
+// ExternalDNS v0.22 marks a current endpoint with txt/force-update when it
 // finds only the legacy ownership name. Exercise that migration end to end:
 // the marker must survive the registry/planner boundary, be consumed by the
 // provider, and result in the missing type-qualified ownership TXT record.
-func TestExternalDNSV021TXTRegistryForceUpdateRepair(t *testing.T) {
+func TestExternalDNSV022TXTRegistryForceUpdateRepair(t *testing.T) {
 	const ownerID = "registry-force-update-test"
 	fake := newFakePorkbun()
 	fake.seed(
@@ -256,7 +256,7 @@ func TestExternalDNSV021TXTRegistryForceUpdateRepair(t *testing.T) {
 		},
 		porkbun.Record{
 			// Before v0.12, the ownership name omitted the record type that
-			// v0.21 inserts after a literal prefix.
+			// v0.22 inserts after a literal prefix.
 			Name: "external-dns-repair.example.com", Type: endpoint.RecordTypeTXT,
 			Content: endpoint.Labels{endpoint.OwnerLabelKey: ownerID}.SerializePlain(false), TTL: "600",
 		},
@@ -279,7 +279,7 @@ func TestExternalDNSV021TXTRegistryForceUpdateRepair(t *testing.T) {
 		t.Fatalf("registry returned %d endpoints, want the owned CNAME", len(current))
 	}
 	if marker, ok := current[0].GetProviderSpecificProperty(providerSpecificTXTForceUpdate); !ok || marker != "true" {
-		t.Fatalf("v0.21 registry did not request TXT repair: %+v", current[0])
+		t.Fatalf("v0.22 registry did not request TXT repair: %+v", current[0])
 	}
 
 	desired, err := singleAdjustedEndpoint(registry,
@@ -293,7 +293,7 @@ func TestExternalDNSV021TXTRegistryForceUpdateRepair(t *testing.T) {
 		OwnerID: ownerID,
 	}).Calculate()
 	if countPlanChanges(repairPlan.Changes) == 0 {
-		t.Fatal("planner ignored the v0.21 TXT force-update marker")
+		t.Fatal("planner ignored the v0.22 TXT force-update marker")
 	}
 	fake.failCreateType.Store(endpoint.RecordTypeTXT)
 	if err := registry.ApplyChanges(context.Background(), repairPlan.Changes); err == nil {
@@ -344,7 +344,7 @@ func TestExternalDNSV021TXTRegistryForceUpdateRepair(t *testing.T) {
 	}
 }
 
-func TestExternalDNSV021TXTRegistryOwnershipFailurePreventsPrimaryCreate(t *testing.T) {
+func TestExternalDNSV022TXTRegistryOwnershipFailurePreventsPrimaryCreate(t *testing.T) {
 	fake := newFakePorkbun()
 	prov := newTestProvider(t, fake)
 	registry, err := txtregistry.New(&externaldns.Config{
@@ -374,8 +374,8 @@ func TestExternalDNSV021TXTRegistryOwnershipFailurePreventsPrimaryCreate(t *test
 
 // ExternalDNS deliberately does not adopt an existing record without its TXT
 // owner marker. Prove that a failed primary create conditionally rolls back the
-// newly-created ownership half, then that v0.21 can retry the clean pair.
-func TestExternalDNSV021TXTRegistryPartialCreateRecovery(t *testing.T) {
+// newly-created ownership half, then that v0.22 can retry the clean pair.
+func TestExternalDNSV022TXTRegistryPartialCreateRecovery(t *testing.T) {
 	fake := newFakePorkbun()
 	prov := newTestProvider(t, fake)
 	registry, err := txtregistry.New(&externaldns.Config{
@@ -444,7 +444,7 @@ func TestExternalDNSV021TXTRegistryPartialCreateRecovery(t *testing.T) {
 	}
 }
 
-func TestExternalDNSV021TXTRegistryPartialDeleteRecovery(t *testing.T) {
+func TestExternalDNSV022TXTRegistryPartialDeleteRecovery(t *testing.T) {
 	fake := newFakePorkbun()
 	prov := newTestProvider(t, fake)
 	registry, err := txtregistry.New(&externaldns.Config{
@@ -495,7 +495,7 @@ func TestExternalDNSV021TXTRegistryPartialDeleteRecovery(t *testing.T) {
 	assertFakeRecordTypes(t, fake, map[string]int{})
 }
 
-func TestExternalDNSV021TXTRegistryPartialMultiTargetDeleteKeepsOwnership(t *testing.T) {
+func TestExternalDNSV022TXTRegistryPartialMultiTargetDeleteKeepsOwnership(t *testing.T) {
 	fake := newFakePorkbun()
 	prov := newTestProvider(t, fake)
 	registry, err := txtregistry.New(&externaldns.Config{
@@ -544,7 +544,7 @@ func TestExternalDNSV021TXTRegistryPartialMultiTargetDeleteKeepsOwnership(t *tes
 	assertFakeRecordTypes(t, fake, map[string]int{})
 }
 
-func TestExternalDNSV021TXTRegistryPartialMultiTargetCreateKeepsOwnership(t *testing.T) {
+func TestExternalDNSV022TXTRegistryPartialMultiTargetCreateKeepsOwnership(t *testing.T) {
 	fake := newFakePorkbun()
 	prov := newTestProvider(t, fake)
 	registry, err := txtregistry.New(&externaldns.Config{
@@ -597,7 +597,7 @@ func TestExternalDNSV021TXTRegistryPartialMultiTargetCreateKeepsOwnership(t *tes
 	assertFakeRecordTypes(t, fake, map[string]int{endpoint.RecordTypeA: 2, endpoint.RecordTypeTXT: 1})
 }
 
-func TestExternalDNSV021TXTRegistryPartialUpdateRemovesOrphan(t *testing.T) {
+func TestExternalDNSV022TXTRegistryPartialUpdateRemovesOrphan(t *testing.T) {
 	fake := newFakePorkbun()
 	prov := newTestProvider(t, fake)
 	registry, err := txtregistry.New(&externaldns.Config{
@@ -655,7 +655,7 @@ func TestExternalDNSV021TXTRegistryPartialUpdateRemovesOrphan(t *testing.T) {
 	}
 }
 
-func TestExternalDNSV021TXTRegistryOwnershipUpdateFailureLeavesPrimaryUntouched(t *testing.T) {
+func TestExternalDNSV022TXTRegistryOwnershipUpdateFailureLeavesPrimaryUntouched(t *testing.T) {
 	fake := newFakePorkbun()
 	fake.seed(
 		porkbun.Record{ID: "primary", Name: "owner-update.example.com", Type: endpoint.RecordTypeA, Content: "192.0.2.1", TTL: "600"},
@@ -687,7 +687,7 @@ func TestExternalDNSV021TXTRegistryOwnershipUpdateFailureLeavesPrimaryUntouched(
 	}
 }
 
-func TestExternalDNSV021TXTRegistryMixedOwnershipUpdateFailsClosedUntilRepaired(t *testing.T) {
+func TestExternalDNSV022TXTRegistryMixedOwnershipUpdateFailsClosedUntilRepaired(t *testing.T) {
 	fake := newFakePorkbun()
 	fake.seed(
 		porkbun.Record{ID: "primary", Name: "owner-repair.example.com", Type: endpoint.RecordTypeA, Content: "192.0.2.1", TTL: "600"},
@@ -750,7 +750,7 @@ func TestExternalDNSV021TXTRegistryMixedOwnershipUpdateFailsClosedUntilRepaired(
 	}
 }
 
-func TestExternalDNSV021TXTRegistryCreateRecoveryCleansTypeSpecificOwnership(t *testing.T) {
+func TestExternalDNSV022TXTRegistryCreateRecoveryCleansTypeSpecificOwnership(t *testing.T) {
 	fake := newFakePorkbun()
 	fake.seed(porkbun.Record{
 		ID: "sibling", Name: "sibling.example.com", Type: endpoint.RecordTypeAAAA,
@@ -768,7 +768,7 @@ func TestExternalDNSV021TXTRegistryCreateRecoveryCleansTypeSpecificOwnership(t *
 	}
 	assertFakeRecordTypes(t, fake, map[string]int{endpoint.RecordTypeAAAA: 1})
 
-	// v0.21 always type-qualifies generated ownership names, so the AAAA sibling
+	// v0.22 always type-qualifies generated ownership names, so the AAAA sibling
 	// must not preserve the failed A record's orphaned TXT marker.
 	fake.failCreateType.Store("")
 	if err := prov.ApplyChanges(context.Background(), changes); err != nil {
@@ -779,7 +779,7 @@ func TestExternalDNSV021TXTRegistryCreateRecoveryCleansTypeSpecificOwnership(t *
 	})
 }
 
-func TestExternalDNSV021TXTRegistryCreateRecoveryCleansFailedSameNameTypeOwnership(t *testing.T) {
+func TestExternalDNSV022TXTRegistryCreateRecoveryCleansFailedSameNameTypeOwnership(t *testing.T) {
 	fake := newFakePorkbun()
 	prov := newTestProvider(t, fake)
 	registry, err := txtregistry.New(&externaldns.Config{

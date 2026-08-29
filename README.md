@@ -48,7 +48,7 @@ Add the repository and export the chart's version-pinned values:
 helm repo add edns-porkbun https://mattgmoser.github.io/external-dns-porkbun-webhook
 helm repo update
 helm show values edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.4.1 > external-dns-porkbun-values.yaml
+  --version 0.5.0 > external-dns-porkbun-values.yaml
 ```
 
 Change all of these in `external-dns-porkbun-values.yaml` before installing:
@@ -64,7 +64,7 @@ Never change `txtOwnerId`, `txtPrefix`, or `txt-wildcard-replacement` casually a
 ```sh
 helm upgrade --install external-dns \
   edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.4.1 \
+  --version 0.5.0 \
   --namespace external-dns \
   --values external-dns-porkbun-values.yaml
 ```
@@ -79,7 +79,7 @@ kubectl -n external-dns rollout restart deployment/external-dns
 
 ### Webhook timeouts and large changes
 
-ExternalDNS defaults to a 15-second total webhook deadline, while Porkbun operations are serialized and a plan can easily contain hundreds of changes. The canonical values use a five-minute total deadline (`30s` + `4m30s`); this covers roughly 200 single-record mutations at the conservative request rate, while ordinary reconciliations complete much sooner. Multi-target changes or retries can still exceed that budget. ExternalDNS v0.21 does not apply its generic `batch-change-size` setting to webhook providers, so that flag cannot safely shorten this bound. Stage unusually large migrations and watch both containers' logs rather than setting an unbounded timeout.
+ExternalDNS defaults to a 15-second total webhook deadline, while Porkbun operations are serialized and a plan can easily contain hundreds of changes. The canonical values use a five-minute total deadline (`30s` + `4m30s`); this covers roughly 200 single-record mutations at the conservative request rate, while ordinary reconciliations complete much sooner. Multi-target changes or retries can still exceed that budget. ExternalDNS v0.22 does not apply its generic `batch-change-size` setting to webhook providers, so that flag cannot safely shorten this bound. Stage unusually large migrations and watch both containers' logs rather than setting an unbounded timeout.
 
 ### TXT representation
 
@@ -94,7 +94,7 @@ Do not use the generic install command above to migrate an existing standalone-c
 Choose one controller path:
 
 - If ExternalDNS is already managed directly with the official chart, keep that release. Add this project's version-pinned [`docs/external-dns-values.yaml`](docs/external-dns-values.yaml) sidecar settings to it, roll out the same-Pod configuration, and then remove the old standalone webhook release.
-- To adopt this wrapper, stop and remove the separately managed ExternalDNS controller and the old standalone webhook release, then install `0.4.1` with the preserved ownership settings and independent credential Secret. Never overlap two writable controllers for the same names.
+- To adopt this wrapper, stop and remove the separately managed ExternalDNS controller and the old standalone webhook release, then install `0.5.0` with the preserved ownership settings and independent credential Secret. Never overlap two writable controllers for the same names.
 
 As a final guard, the first in-place Helm upgrade from `0.3.0` or earlier is rejected unless `migration.acknowledgeControllerReplacement=true` is explicitly set. That acknowledgement only confirms that you completed the controller handoff; it does not perform the migration. A fresh `0.4.0` or later install, or an acknowledged migration, creates a release-owned topology marker, so later routine upgrades of that release do not need the acknowledgement again.
 
@@ -136,6 +136,62 @@ External-DNS reconciles cluster-state into desired DNS records. For Porkbun (not
 ### Supported record types
 
 The provider codec reads and writes every DNS type currently accepted by Porkbun: `A`, `AAAA`, `CNAME`, `TXT`, `MX`, `NS`, `SRV`, `TLSA`, `CAA`, `SSHFP`, `HTTPS`, and `SVCB`. Porkbun `ALIAS` records are presented to ExternalDNS as CNAME endpoints with `providerSpecific.alias=true`; an apex CNAME is automatically stored as `ALIAS`. The chart's `external-dns-%{record_type}.` TXT prefix keeps apex ownership records inside the managed zone, and `_wildcard` replaces an otherwise invalid `*` label in wildcard ownership records, as required by the [ExternalDNS TXT registry](https://kubernetes-sigs.github.io/external-dns/latest/docs/registry/txt/). Preserve established registry settings during upgrades; changing them requires a planned migration. MX and SRV priorities are translated between ExternalDNS's target syntax and Porkbun's separate `prio` field.
+
+`DNAME`, added to ExternalDNS's supported record types in v0.22.0, is deliberately unmanaged because Porkbun has no `DNAME` record type. ExternalDNS only sends the types listed in `--managed-record-types` (default `A`, `AAAA`, `CNAME`), so it is never sent unless you opt in; if you do, the provider rejects it with an explicit validation error rather than silently dropping the record.
+
+### Upgrading
+
+The quickstart exports the chart's values to a file you keep. That file pins
+`external-dns.provider.webhook.image.tag`, so re-using it unchanged across a
+chart upgrade keeps the **old webhook image**, including for a security
+release. Re-export the values on upgrade, or bump that tag by hand, and diff
+your copy against the new defaults:
+
+```sh
+helm show values edns-porkbun/external-dns-porkbun-webhook --version 0.5.0 \
+  | diff -u external-dns-porkbun-values.yaml - || true
+```
+
+The chart pins the bundled ExternalDNS controller image to an exact digest and
+refuses to render if that pin is removed or replaced with a floating tag,
+because the dependency chart's own default is the older, vulnerable image.
+
+### Upgrading to ExternalDNS v0.22.0
+
+ExternalDNS v0.22.0 changed the default annotation prefix to `external-dns.kubernetes.io/` **with no fallback**, and made `--policy` a required flag. A release that still annotates with `external-dns.alpha.kubernetes.io/` would stop being seen by the controller after the change, and under `policy: sync` the planner deletes the records behind those hostnames.
+
+This chart therefore pins `external-dns.annotationPrefix` to `external-dns.alpha.kubernetes.io/`, so upgrading is behaviour preserving, and rejects an unset, malformed, or unrecognised prefix at render time. Resources that take their hostname from an Ingress `spec.rules[].host` are unaffected either way, because that path does not involve annotations.
+
+To move to the new prefix, migrate your annotations first, then set it deliberately as a separate change, after the upgrade has settled:
+
+```sh
+helm upgrade external-dns edns-porkbun/external-dns-porkbun-webhook \
+  --version 0.5.0 \
+  --values external-dns-porkbun-values.yaml \
+  --set-string external-dns.annotationPrefix=external-dns.kubernetes.io/
+```
+
+Do not use `--reuse-values` for this upgrade. It replaces the new chart's defaults with the previous release's values, so the release would report chart `0.5.0` while still running the **old** ExternalDNS and webhook images -- defeating the point of a security release. Pass your values file explicitly, as above.
+
+Upstream's [version update playbook](https://kubernetes-sigs.github.io/external-dns/latest/docs/version-update-playbook/) recommends a dry run first. Set `DRY_RUN` in your values file rather than with `--set`, because a bare `--set ...value=true` renders a YAML boolean and Kubernetes requires `EnvVar.value` to be a string:
+
+```yaml
+external-dns:
+  provider:
+    webhook:
+      env:
+        - name: DRY_RUN
+          value: "true"
+```
+
+#### Source prerequisites
+
+Two v0.22.0 source migrations are **not** guarded by this chart, because they depend on CRDs it does not install. Check these before upgrading if you use them:
+
+- `gateway-tlsroute` now requires Gateway API `v1` `TLSRoute` (standard channel since Gateway API v1.5.0). On older CRDs the informer never syncs and DNS reconciliation stops silently.
+- `ambassador-host` now requires `getambassador.io/v3alpha1`.
+
+The chart's default sources are `ingress` and `service`, neither of which is affected.
 
 ## Endpoints
 

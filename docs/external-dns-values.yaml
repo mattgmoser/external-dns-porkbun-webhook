@@ -1,14 +1,28 @@
-# Canonical installation values for the official ExternalDNS chart v1.21.1
-# (ExternalDNS v0.21.0). Copy this file and replace every example value before
-# installing. Keep txtOwnerId, txtPrefix, and txt-wildcard-replacement stable
-# for the lifetime of a zone.
+# Canonical installation values for the official ExternalDNS chart v1.21.1,
+# running the patched ExternalDNS v0.22.0 controller image. Copy this file and
+# replace every example value before installing. Keep txtOwnerId, txtPrefix,
+# and txt-wildcard-replacement stable for the lifetime of a zone.
+
+# Chart 1.21.1 still defaults to the v0.21.0 image, which is built with Go
+# 1.26.1 and carries 37 fixable HIGH findings. Pin the patched v0.22.0 release
+# by digest until an official chart ships it.
+image:
+  repository: registry.k8s.io/external-dns/external-dns
+  tag: "v0.22.0@sha256:5fdcaf7deb5c158f93a1fc6fe169cdff4cfb9ae0172bee1a90ab0ef74fb9c9cf"
+  pullPolicy: IfNotPresent
+
+# ExternalDNS v0.22.0 dropped the annotation-prefix fallback. Keep the
+# established prefix so upgrading does not hide already-annotated hostnames
+# from the controller; under policy=sync the planner deletes records it can no
+# longer see. Migrate annotations first, then change this deliberately.
+annotationPrefix: external-dns.alpha.kubernetes.io/
 
 provider:
   name: webhook
   webhook:
     image:
       repository: ghcr.io/mattgmoser/external-dns-porkbun-webhook
-      tag: "0.4.1"
+      tag: "0.5.0"
       pullPolicy: IfNotPresent
     env:
       - name: PORKBUN_API_KEY

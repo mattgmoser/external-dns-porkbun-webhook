@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.5.0
+
+### Security
+
+- Rebuild the webhook on Go `1.26.7`, clearing eight fixable HIGH Go standard library findings that had blocked the daily release scan since the `0.4.1` image was published: CVE-2026-33818 (`encoding/asn1`), CVE-2026-39821 (`golang.org/x/net/idna`), CVE-2026-46600 (`golang.org/x/net/dns/dnsmessage`), CVE-2026-56853 (`net/http`), CVE-2026-56858 (`html/template`), CVE-2026-56859 (`encoding/xml`), CVE-2026-56860 (`net/url`), and CVE-2026-56862 (`crypto/tls`). Five of these were reachable from this binary's own call graph according to `govulncheck`.
+- Pin the bundled ExternalDNS controller to the patched `v0.22.0` image by digest. The official chart dependency remains `1.21.1`, whose `0.21.0` appVersion image is built with Go `1.26.1` and contributed 55 fixable findings (37 HIGH) to this package's published image set; `v0.22.0` reports none. Every argument this chart renders was verified against the `v0.22.0` binary before pinning.
+- Validate `annotationPrefix` and the controller image tag as raw values rather than trimmed ones. The dependency renders both verbatim, so a leading space passed a trimmed allowlist while the controller searched for annotation keys beginning with a space -- every annotation-derived endpoint would leave the desired set and `policy: sync` would delete the records behind them.
+- Accept any DNS-subdomain `annotationPrefix`, not only the two upstream spellings. A split-horizon release may legitimately run a custom prefix, and forcing it onto one of ours would hide its annotations and cause exactly the deletion this guard exists to prevent.
+- Fail closed when the bundled ExternalDNS controller image is not pinned to an exact digest. The dependency chart's own default is the `0.21.0` image, so a values file that clears or floats `external-dns.image.tag` -- which a coalesced values dump reintroduces as `tag: null` -- would otherwise silently downgrade the controller back to the vulnerable runtime.
+- Escape Prometheus label values in the hand-rolled exposition renderer. No value emitted today can break out of its quoted string, because route names are internal constants and `net/http` rejects a non-token request method before a handler runs, but escaping removes the dependency on those invariants.
+
+### ExternalDNS v0.22.0
+
+- Update to ExternalDNS `v0.22.0`. The webhook provider protocol is unchanged (`application/external.dns.webhook+json;version=1`), and the serialised `Endpoint` and `plan.Changes` shapes are wire-compatible with `v0.21`, so this release interoperates with both controller versions.
+- Pin `annotationPrefix` to `external-dns.alpha.kubernetes.io/`. ExternalDNS `v0.22.0` changed the default to `external-dns.kubernetes.io/` with no fallback; inheriting that silently would hide already-annotated hostnames from the controller, and under `policy: sync` the planner deletes the records it can no longer see. Migrate annotations first, then set the new prefix deliberately.
+- Fail closed at render time when `annotationPrefix` or `policy` is unset, and when `annotationPrefix` is malformed or is not a recognised ExternalDNS prefix. `v0.22.0` made `--policy` required with no default.
+- Keep `DNAME`, added to ExternalDNS's supported record types in `v0.22.0`, unmanaged: Porkbun has no `DNAME` record type. ExternalDNS only sends types listed in `--managed-record-types` (default `A`, `AAAA`, `CNAME`), so it is never sent unless an operator opts in, and an opt-in now produces a clear validation error rather than a silent drop.
+- Update `github.com/miekg/dns` to `v1.1.73` and `github.com/sirupsen/logrus` to `v1.10.1`, superseding the two dependency updates whose CI runs failed on the Go `1.26.5` toolchain.
+
+### Documentation
+
+- Warn that a saved values file pins the webhook image tag, so re-using it unchanged across an upgrade keeps the old image, and show how to diff a saved copy against the new defaults.
+- Warn against `--reuse-values` for this upgrade: it replaces the new chart's defaults with the previous release's values, leaving a release that reports chart `0.5.0` while still running both old images.
+- Correct the dry-run instructions to set `DRY_RUN` in a values file, because `--set ...value=true` renders a YAML boolean and Kubernetes requires `EnvVar.value` to be a string.
+- Document the two v0.22.0 source migrations this chart cannot guard, `gateway-tlsroute` requiring Gateway API `v1` `TLSRoute` and `ambassador-host` requiring `getambassador.io/v3alpha1`, either of which stops reconciliation silently on older CRDs.
+
+### Testing
+
+- Pin the upstream `DomainFilter` JSON contract with regression tests. The provider's scope guard inspects the filter through its JSON representation because the type's fields are unexported, so a renamed or dropped key would silently stop it rejecting exclusion and regular-expression filters it cannot honour. An upgrade that changes that shape now fails loudly in tests.
+- Re-point the upstream TXT registry integration suite at the `v0.22.0` registry and planner it now exercises, confirming the paired ownership layouts this provider depends on are unchanged.
+
 ## 0.4.1
 
 ### Security and distribution

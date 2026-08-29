@@ -180,7 +180,7 @@ func (p *Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error) {
 			}
 			grouped[k] = ep
 		} else if ttl != ep.RecordTTL {
-			// A DNS RRset should have one TTL. Mark drift so ExternalDNS's v0.21
+			// A DNS RRset should have one TTL. Mark drift so ExternalDNS's v0.22
 			// planner schedules an update even when the minimum happens to equal
 			// the desired TTL.
 			ep.SetProviderSpecificProperty(providerSpecificTTLDrift, providerSpecificTTLDriftEnabled)
@@ -240,7 +240,7 @@ func (p *Provider) ApplyChanges(ctx context.Context, changes *plan.Changes) erro
 		return fmt.Errorf("index current records: %w", err)
 	}
 
-	// ExternalDNS v0.21 sends registry deletes as [primaries..., ownership
+	// ExternalDNS v0.22 sends registry deletes as [primaries..., ownership
 	// TXTs...]. Process each logical pair together so a deadline cannot delete
 	// many primaries before reaching their ownership records. If either half is
 	// ambiguous, the pending-cleanup queue makes the next Records call either
@@ -364,7 +364,7 @@ type registryUpdatePair struct {
 }
 
 // validateRegistryCreateLayout verifies the partial one-to-one layout used by
-// v0.21 creates: generated ownership records are a suffix, but the suffix can
+// v0.22 creates: generated ownership records are a suffix, but the suffix can
 // be shorter than the primary prefix when an ownership TXT already exists.
 func validateRegistryCreateLayout(creates []*endpoint.Endpoint) error {
 	ownershipStart := -1
@@ -415,7 +415,7 @@ func validateRegistryCreateLayout(creates []*endpoint.Endpoint) error {
 }
 
 // registryDeletePairs recognizes the exact layout emitted by ExternalDNS's
-// v0.21 TXT registry. A batch with no generated ownership records is left in
+// v0.22 TXT registry. A batch with no generated ownership records is left in
 // provider-native order. Once a generated ownership record is present, the
 // entire layout must be unambiguous before any Porkbun request is made.
 func registryDeletePairs(deletes []*endpoint.Endpoint) ([]registryDeletePair, bool, error) {
@@ -452,7 +452,7 @@ func registryDeletePairs(deletes []*endpoint.Endpoint) ([]registryDeletePair, bo
 }
 
 // registryUpdatePairs recognizes the one-to-one ownership suffix appended to
-// both update slices by ExternalDNS's v0.21 TXT registry.
+// both update slices by ExternalDNS's v0.22 TXT registry.
 func registryUpdatePairs(oldEndpoints, newEndpoints []*endpoint.Endpoint) ([]registryUpdatePair, bool, error) {
 	oldStart, newStart := -1, -1
 	for i, ep := range oldEndpoints {
@@ -500,7 +500,7 @@ func registryUpdatePairs(oldEndpoints, newEndpoints []*endpoint.Endpoint) ([]reg
 
 // protectedEndpointForOwnership returns the most specific primary identity the
 // provider can infer without knowing the TXT registry's configurable mapper.
-// A complete v0.21 ownership suffix is positionally paired with the primary
+// A complete v0.22 ownership suffix is positionally paired with the primary
 // prefix, which disambiguates same-name records of different types. A partial
 // suffix can omit already-existing markers; when its matching primary type is
 // genuinely ambiguous, an empty type deliberately makes cleanup conservative.
@@ -768,7 +768,7 @@ func (p *Provider) editOwnershipTargets(
 }
 
 // protectedRecordExists reports whether the exact managed record protected by
-// an ownership marker is present. ExternalDNS v0.21 always type-qualifies its
+// an ownership marker is present. ExternalDNS v0.22 always type-qualifies its
 // generated TXT names, so a same-name sibling of a different type must not keep
 // an orphaned marker alive. An empty protected type remains conservative for a
 // genuinely ambiguous caller-supplied batch.
@@ -985,7 +985,7 @@ func (p *Provider) updateEndpoint(ctx context.Context, oldEP, newEP *endpoint.En
 
 // updateOwnershipEndpoint edits an existing ownership record in place whenever
 // its serialized labels change. This avoids a window with two distinct owner
-// values, which v0.21 would collapse and only partially delete.
+// values, which v0.22 would collapse and only partially delete.
 func (p *Provider) updateOwnershipEndpoint(ctx context.Context, oldEP, newEP *endpoint.Endpoint, idx *index) error {
 	oldTarget, newTarget := oldEP.Targets[0], newEP.Targets[0]
 	if oldTarget != newTarget {
