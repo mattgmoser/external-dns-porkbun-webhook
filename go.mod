@@ -6,7 +6,7 @@ toolchain go1.26.7
 
 require (
 	github.com/miekg/dns v1.1.73
-	github.com/sirupsen/logrus v1.10.1
+	github.com/sirupsen/logrus v1.10.2
 	sigs.k8s.io/external-dns v0.22.0
 )
 
