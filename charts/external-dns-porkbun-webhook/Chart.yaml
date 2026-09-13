@@ -19,7 +19,7 @@ maintainers:
 icon: https://raw.githubusercontent.com/kubernetes-sigs/external-dns/master/docs/img/external-dns.png
 dependencies:
   - name: external-dns
-    version: 1.21.1
+    version: 1.22.0
     repository: https://kubernetes-sigs.github.io/external-dns/
 annotations:
   artifacthub.io/category: networking
