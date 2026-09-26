@@ -48,7 +48,7 @@ Add the repository and export the chart's version-pinned values:
 helm repo add edns-porkbun https://mattgmoser.github.io/external-dns-porkbun-webhook
 helm repo update
 helm show values edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.5.0 > external-dns-porkbun-values.yaml
+  --version 0.5.1 > external-dns-porkbun-values.yaml
 ```
 
 Change all of these in `external-dns-porkbun-values.yaml` before installing:
@@ -64,7 +64,7 @@ Never change `txtOwnerId`, `txtPrefix`, or `txt-wildcard-replacement` casually a
 ```sh
 helm upgrade --install external-dns \
   edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.5.0 \
+  --version 0.5.1 \
   --namespace external-dns \
   --values external-dns-porkbun-values.yaml
 ```
@@ -94,7 +94,7 @@ Do not use the generic install command above to migrate an existing standalone-c
 Choose one controller path:
 
 - If ExternalDNS is already managed directly with the official chart, keep that release. Add this project's version-pinned [`docs/external-dns-values.yaml`](docs/external-dns-values.yaml) sidecar settings to it, roll out the same-Pod configuration, and then remove the old standalone webhook release.
-- To adopt this wrapper, stop and remove the separately managed ExternalDNS controller and the old standalone webhook release, then install `0.5.0` with the preserved ownership settings and independent credential Secret. Never overlap two writable controllers for the same names.
+- To adopt this wrapper, stop and remove the separately managed ExternalDNS controller and the old standalone webhook release, then install `0.5.1` with the preserved ownership settings and independent credential Secret. Never overlap two writable controllers for the same names.
 
 As a final guard, the first in-place Helm upgrade from `0.3.0` or earlier is rejected unless `migration.acknowledgeControllerReplacement=true` is explicitly set. That acknowledgement only confirms that you completed the controller handoff; it does not perform the migration. A fresh `0.4.0` or later install, or an acknowledged migration, creates a release-owned topology marker, so later routine upgrades of that release do not need the acknowledgement again.
 
@@ -148,7 +148,7 @@ release. Re-export the values on upgrade, or bump that tag by hand, and diff
 your copy against the new defaults:
 
 ```sh
-helm show values edns-porkbun/external-dns-porkbun-webhook --version 0.5.0 \
+helm show values edns-porkbun/external-dns-porkbun-webhook --version 0.5.1 \
   | diff -u external-dns-porkbun-values.yaml - || true
 ```
 
@@ -166,12 +166,12 @@ To move to the new prefix, migrate your annotations first, then set it deliberat
 
 ```sh
 helm upgrade external-dns edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.5.0 \
+  --version 0.5.1 \
   --values external-dns-porkbun-values.yaml \
   --set-string external-dns.annotationPrefix=external-dns.kubernetes.io/
 ```
 
-Do not use `--reuse-values` for this upgrade. It replaces the new chart's defaults with the previous release's values, so the release would report chart `0.5.0` while still running the **old** ExternalDNS and webhook images -- defeating the point of a security release. Pass your values file explicitly, as above.
+Do not use `--reuse-values` for this upgrade. It replaces the new chart's defaults with the previous release's values, so the release would report chart `0.5.1` while still running the **old** ExternalDNS and webhook images -- defeating the point of a security release. Pass your values file explicitly, as above.
 
 Upstream's [version update playbook](https://kubernetes-sigs.github.io/external-dns/latest/docs/version-update-playbook/) recommends a dry run first. Set `DRY_RUN` in your values file rather than with `--set`, because a bare `--set ...value=true` renders a YAML boolean and Kubernetes requires `EnvVar.value` to be a string:
 
