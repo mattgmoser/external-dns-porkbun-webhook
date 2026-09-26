@@ -65,7 +65,7 @@ require_literal '        - name: webhook'
 require_literal '              value: 127.0.0.1:8888'
 require_literal '      targetPort: http-webhook'
 require_literal '  topology: official-external-dns-same-pod-sidecar'
-require_literal 'image: registry.k8s.io/external-dns/external-dns:v0.22.0@sha256:'
+require_literal 'image: registry.k8s.io/external-dns/external-dns:v0.23.0@sha256:'
 require_literal '            - --annotation-prefix=external-dns.alpha.kubernetes.io/'
 
 if grep -Eq '^[[:space:]]+(port|containerPort):[[:space:]]+8888$' "$rendered_wrapper"; then
@@ -92,8 +92,8 @@ dependency_chart='external-dns-porkbun-webhook/charts/external-dns/Chart.yaml'
 grep -Fqx "$dependency_chart" <<< "$archive_listing"
 dependency_version=$(tar xOf "$package" "$dependency_chart" | awk '$1 == "version:" {print $2; exit}')
 dependency_app_version=$(tar xOf "$package" "$dependency_chart" | awk '$1 == "appVersion:" {print $2; exit}')
-test "$dependency_version" = '1.21.1'
-test "$dependency_app_version" = '0.21.0'
+test "$dependency_version" = '1.22.0'
+test "$dependency_app_version" = '0.22.0'
 if grep -Fq 'artifacthub-repo.yml' <<< "$archive_listing"; then
   echo 'Artifact Hub repository metadata belongs beside index.yaml, not inside the chart' >&2
   exit 1
@@ -173,13 +173,15 @@ if helm template external-dns "$chart_dir" \
   exit 1
 fi
 
-# The dependency chart's own default image is the vulnerable 0.21.0 runtime, so
-# any override that unpins the controller must fail rather than silently
-# downgrade it.
+# The dependency chart's own default image is the 0.22.0 runtime, which now has
+# fixable findings, so any override that unpins the controller must fail rather
+# than silently downgrade it. A floating tag is rejected even for the pinned
+# release, because only the digest makes the published runtime immutable.
 controller_image_overrides=(
   'external-dns.image.tag='
   'external-dns.image.tag=v0.21.0'
   'external-dns.image.tag=v0.22.0'
+  'external-dns.image.tag=v0.23.0'
   'external-dns.image.tag=latest'
   'external-dns.image.repository=example.invalid/external-dns'
 )

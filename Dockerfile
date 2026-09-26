@@ -1,7 +1,7 @@
 ## Multi-stage, multi-arch.
 ## Builds for amd64, arm64, arm/v7. Final image is distroless static (~3 MB + binary).
 
-ARG GO_VERSION=1.26.7
+ARG GO_VERSION=1.27.1
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS build
 WORKDIR /src
 

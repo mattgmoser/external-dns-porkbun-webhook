@@ -48,7 +48,7 @@ Add the repository and export the chart's version-pinned values:
 helm repo add edns-porkbun https://mattgmoser.github.io/external-dns-porkbun-webhook
 helm repo update
 helm show values edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.5.1 > external-dns-porkbun-values.yaml
+  --version 0.6.0 > external-dns-porkbun-values.yaml
 ```
 
 Change all of these in `external-dns-porkbun-values.yaml` before installing:
@@ -64,7 +64,7 @@ Never change `txtOwnerId`, `txtPrefix`, or `txt-wildcard-replacement` casually a
 ```sh
 helm upgrade --install external-dns \
   edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.5.1 \
+  --version 0.6.0 \
   --namespace external-dns \
   --values external-dns-porkbun-values.yaml
 ```
@@ -79,7 +79,7 @@ kubectl -n external-dns rollout restart deployment/external-dns
 
 ### Webhook timeouts and large changes
 
-ExternalDNS defaults to a 15-second total webhook deadline, while Porkbun operations are serialized and a plan can easily contain hundreds of changes. The canonical values use a five-minute total deadline (`30s` + `4m30s`); this covers roughly 200 single-record mutations at the conservative request rate, while ordinary reconciliations complete much sooner. Multi-target changes or retries can still exceed that budget. ExternalDNS v0.22 does not apply its generic `batch-change-size` setting to webhook providers, so that flag cannot safely shorten this bound. Stage unusually large migrations and watch both containers' logs rather than setting an unbounded timeout.
+ExternalDNS defaults to a 15-second total webhook deadline, while Porkbun operations are serialized and a plan can easily contain hundreds of changes. The canonical values use a five-minute total deadline (`30s` + `4m30s`); this covers roughly 200 single-record mutations at the conservative request rate, while ordinary reconciliations complete much sooner. Multi-target changes or retries can still exceed that budget. ExternalDNS v0.23 does not apply its generic `batch-change-size` setting to webhook providers, so that flag cannot safely shorten this bound. Stage unusually large migrations and watch both containers' logs rather than setting an unbounded timeout.
 
 ### TXT representation
 
@@ -94,7 +94,7 @@ Do not use the generic install command above to migrate an existing standalone-c
 Choose one controller path:
 
 - If ExternalDNS is already managed directly with the official chart, keep that release. Add this project's version-pinned [`docs/external-dns-values.yaml`](docs/external-dns-values.yaml) sidecar settings to it, roll out the same-Pod configuration, and then remove the old standalone webhook release.
-- To adopt this wrapper, stop and remove the separately managed ExternalDNS controller and the old standalone webhook release, then install `0.5.1` with the preserved ownership settings and independent credential Secret. Never overlap two writable controllers for the same names.
+- To adopt this wrapper, stop and remove the separately managed ExternalDNS controller and the old standalone webhook release, then install `0.6.0` with the preserved ownership settings and independent credential Secret. Never overlap two writable controllers for the same names.
 
 As a final guard, the first in-place Helm upgrade from `0.3.0` or earlier is rejected unless `migration.acknowledgeControllerReplacement=true` is explicitly set. That acknowledgement only confirms that you completed the controller handoff; it does not perform the migration. A fresh `0.4.0` or later install, or an acknowledged migration, creates a release-owned topology marker, so later routine upgrades of that release do not need the acknowledgement again.
 
@@ -142,19 +142,33 @@ The provider codec reads and writes every DNS type currently accepted by Porkbun
 ### Upgrading
 
 The quickstart exports the chart's values to a file you keep. That file pins
-`external-dns.provider.webhook.image.tag`, so re-using it unchanged across a
-chart upgrade keeps the **old webhook image**, including for a security
-release. Re-export the values on upgrade, or bump that tag by hand, and diff
-your copy against the new defaults:
+both `external-dns.image.tag` and `external-dns.provider.webhook.image.tag`,
+so re-using it unchanged across a chart upgrade keeps the **old controller and
+webhook images**, including for a security release. An old controller pin is
+still an exact digest, so the chart cannot tell it apart from a deliberate one.
+Re-export the values on upgrade, or bump both tags by hand, and diff your copy
+against the new defaults:
 
 ```sh
-helm show values edns-porkbun/external-dns-porkbun-webhook --version 0.5.1 \
+helm show values edns-porkbun/external-dns-porkbun-webhook --version 0.6.0 \
   | diff -u external-dns-porkbun-values.yaml - || true
 ```
 
 The chart pins the bundled ExternalDNS controller image to an exact digest and
 refuses to render if that pin is removed or replaced with a floating tag,
 because the dependency chart's own default is the older, vulnerable image.
+
+### Upgrading to ExternalDNS v0.23.0
+
+Chart `0.6.0` moves the bundled controller from ExternalDNS v0.22.0 to v0.23.0, pinned by digest, on the official chart `1.22.0`. With this chart's TXT registry and default sources the upgrade needs no values changes beyond the two image tags above. Upgrading from `0.4.x` or earlier also crosses v0.22.0, so read the next section first.
+
+- Ownership TXT records are now deleted and replaced using the value read from the zone, rather than a re-serialization of their labels ([kubernetes-sigs/external-dns#6680](https://github.com/kubernetes-sigs/external-dns/pull/6680)). Under v0.22, an ownership record whose stored value differed from that serialization, such as one written by an older ExternalDNS, was silently left behind when its record was deleted and duplicated when it was updated. v0.23 deletes or rewrites it in place. It does not go back and clean up orphans that v0.22 already left.
+- Webhook request and response bodies are capped at 32 MiB (`--webhook-provider-max-body-size`). A Porkbun zone's record listing is far below that.
+- If you enable `--txt-encrypt-enabled`, which this chart does not, read upstream's [encryption recommendations](https://kubernetes-sigs.github.io/external-dns/latest/docs/registry/txt/#encryption) first. Go 1.27 changed gzip output, so encrypted ownership values are no longer byte-stable across versions.
+- Upstream added `--enable-legacy-annotation-prefix`, which also reads `external-dns.alpha.kubernetes.io/` annotations during a prefix migration. This chart does not set it, because its pinned prefix already preserves behaviour.
+- The `crd` registry now needs `--crd-registry-namespace` when upgrading from v0.22.0. This chart uses the TXT registry.
+
+The rendered `app.kubernetes.io/version` label comes from the dependency chart's appVersion, so it reads `0.22.0`; the running controller is the pinned v0.23.0 image. Pass your values file explicitly rather than using `--reuse-values`, for the reason given below.
 
 ### Upgrading to ExternalDNS v0.22.0
 
@@ -166,12 +180,12 @@ To move to the new prefix, migrate your annotations first, then set it deliberat
 
 ```sh
 helm upgrade external-dns edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.5.1 \
+  --version 0.6.0 \
   --values external-dns-porkbun-values.yaml \
   --set-string external-dns.annotationPrefix=external-dns.kubernetes.io/
 ```
 
-Do not use `--reuse-values` for this upgrade. It replaces the new chart's defaults with the previous release's values, so the release would report chart `0.5.1` while still running the **old** ExternalDNS and webhook images -- defeating the point of a security release. Pass your values file explicitly, as above.
+Do not use `--reuse-values` for this upgrade. It replaces the new chart's defaults with the previous release's values, so the release would report chart `0.6.0` while still running the **old** ExternalDNS and webhook images -- defeating the point of a security release. Pass your values file explicitly, as above.
 
 Upstream's [version update playbook](https://kubernetes-sigs.github.io/external-dns/latest/docs/version-update-playbook/) recommends a dry run first. Set `DRY_RUN` in your values file rather than with `--set`, because a bare `--set ...value=true` renders a YAML boolean and Kubernetes requires `EnvVar.value` to be a string:
 

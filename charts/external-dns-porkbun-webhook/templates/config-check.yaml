@@ -97,11 +97,12 @@ one of ours would hide its annotations and cause the very deletion this guards.
 {{- fail "set external-dns.policy explicitly; ExternalDNS 0.22 removed the default and requires the flag" -}}
 {{- end -}}
 {{- /*
-The dependency chart is still 1.21.1, whose appVersion is the ExternalDNS
-0.21.0 image. That image carries fixable HIGH findings, and the subchart falls
-back to it whenever this tag is empty. A coalesced values dump reintroduces
-`image.tag: null`, so an upgrade could silently downgrade the controller to a
-known-vulnerable runtime with no warning. Require an exact digest instead.
+The dependency chart is 1.22.0, whose appVersion is the ExternalDNS 0.22.0
+image. That image now carries fixable findings, including a HIGH, and the
+subchart falls back to it whenever this tag is empty. A coalesced values dump
+reintroduces `image.tag: null`, so an upgrade could silently downgrade the
+controller to a known-vulnerable runtime with no warning. Require an exact
+digest instead.
 */ -}}
 {{- $controllerImage := index $externalDNS "image" | default dict -}}
 {{- $controllerRepo := index $controllerImage "repository" | default "" -}}
@@ -110,5 +111,5 @@ known-vulnerable runtime with no warning. Require an exact digest instead.
 {{- fail (printf "external-dns.image.repository must remain registry.k8s.io/external-dns/external-dns, got %q" $controllerRepo) -}}
 {{- end -}}
 {{- if not (regexMatch "^v[0-9]+\\.[0-9]+\\.[0-9]+@sha256:[0-9a-f]{64}$" $controllerTag) -}}
-{{- fail (printf "external-dns.image.tag must pin the ExternalDNS controller to an exact digest (vMAJOR.MINOR.PATCH@sha256:...); got %q. An empty or floating tag silently falls back to the dependency chart's 0.21.0 image, which has fixable HIGH vulnerabilities" $controllerTag) -}}
+{{- fail (printf "external-dns.image.tag must pin the ExternalDNS controller to an exact digest (vMAJOR.MINOR.PATCH@sha256:...); got %q. An empty or floating tag silently falls back to the dependency chart's 0.22.0 image, which has fixable vulnerabilities" $controllerTag) -}}
 {{- end -}}

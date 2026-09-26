@@ -4,7 +4,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.Version=$(VERSION)
 GO_BUILD := CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)"
 CHART := charts/$(BINARY)
-EXTERNAL_DNS_CHART_VERSION := 1.21.1
+EXTERNAL_DNS_CHART_VERSION := 1.22.0
 EXTERNAL_DNS_CHART_REPOSITORY := https://kubernetes-sigs.github.io/external-dns/
 EXTERNAL_DNS_CHART_URL := https://github.com/kubernetes-sigs/external-dns/releases/download/external-dns-helm-chart-$(EXTERNAL_DNS_CHART_VERSION)/external-dns-$(EXTERNAL_DNS_CHART_VERSION).tgz
 

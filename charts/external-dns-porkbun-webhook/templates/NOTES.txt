@@ -1,5 +1,5 @@
 external-dns-porkbun-webhook {{ .Chart.AppVersion }} is installed through the
-official ExternalDNS 1.21.1 chart.
+official ExternalDNS 1.22.0 chart.
 
 The ExternalDNS controller and Porkbun webhook share one Pod. The provider API
 listens only on 127.0.0.1:8888; the Service exposes the separate ops endpoint.
