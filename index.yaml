@@ -5,6 +5,70 @@ entries:
       artifacthub.io/category: networking
       artifacthub.io/changes: |
         - kind: security
+          description: Pinned the bundled ExternalDNS controller to v0.23.0 by digest, clearing the fixable findings the v0.22.0 image now carries, including CVE-2026-84445 (HIGH, google.golang.org/grpc) and CVE-2026-56855 and CVE-2026-78662 (golang.org/x/crypto)
+        - kind: changed
+          description: Updated to ExternalDNS v0.23.0 and the official chart 1.22.0, and verified every rendered argument against the v0.23.0 binary
+        - kind: fixed
+          description: Ownership TXT records whose stored value differs from their re-serialized labels are now deleted and updated in place instead of being orphaned or duplicated, through ExternalDNS v0.23's stored-value deletes
+        - kind: changed
+          description: Rebuilt the webhook on Go 1.27.1, which ExternalDNS v0.23.0 requires
+      artifacthub.io/containsSecurityUpdates: "true"
+      artifacthub.io/images: |
+        - name: external-dns
+          image: registry.k8s.io/external-dns/external-dns:v0.23.0
+        - name: porkbun-webhook
+          image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:0.6.0
+          platforms:
+            - linux/amd64
+            - linux/arm64
+            - linux/arm/v7
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/links: |
+        - name: source
+          url: https://github.com/mattgmoser/external-dns-porkbun-webhook
+        - name: external-dns
+          url: https://github.com/kubernetes-sigs/external-dns
+        - name: porkbun api
+          url: https://porkbun.com/api/json/v3/documentation
+        - name: support
+          url: https://github.com/mattgmoser/external-dns-porkbun-webhook/issues
+      artifacthub.io/recommendations: |
+        - url: https://artifacthub.io/packages/helm/external-dns/external-dns
+      artifacthub.io/signKey: |
+        fingerprint: 1CD080E5799F3F24960E791966B9EDBB9FE0C877
+        url: https://github.com/mattgmoser/external-dns-porkbun-webhook/raw/main/charts/external-dns-porkbun-webhook/keys/66B9EDBB9FE0C877.asc
+    apiVersion: v2
+    appVersion: 0.6.0
+    created: "2026-09-26T20:03:52.248358081Z"
+    dependencies:
+    - name: external-dns
+      repository: https://kubernetes-sigs.github.io/external-dns/
+      version: 1.22.0
+    description: ExternalDNS with the Porkbun webhook installed as a secure same-Pod
+      sidecar
+    digest: ba3f79c382909b249a90499c1ee46a4a9c1041e95d522ca3d39a12eafcae98dd
+    home: https://github.com/mattgmoser/external-dns-porkbun-webhook
+    icon: https://raw.githubusercontent.com/kubernetes-sigs/external-dns/master/docs/img/external-dns.png
+    keywords:
+    - external-dns
+    - porkbun
+    - dns
+    - webhook
+    kubeVersion: '>=1.24.0-0'
+    maintainers:
+    - name: mattgmoser
+      url: https://github.com/mattgmoser
+    name: external-dns-porkbun-webhook
+    sources:
+    - https://github.com/mattgmoser/external-dns-porkbun-webhook
+    type: application
+    urls:
+    - https://github.com/mattgmoser/external-dns-porkbun-webhook/releases/download/external-dns-porkbun-webhook-0.6.0/external-dns-porkbun-webhook-0.6.0.tgz
+    version: 0.6.0
+  - annotations:
+      artifacthub.io/category: networking
+      artifacthub.io/changes: |
+        - kind: security
           description: Rebuilt the webhook image on the distroless Debian 13 base, which ships tzdata 2026c and clears the fixable DLA-4792-1 finding that the Debian 12 base carried
         - kind: changed
           description: The webhook runtime base moves from gcr.io/distroless/static-debian12 to gcr.io/distroless/static-debian13; the binary, chart templates, and bundled ExternalDNS v0.22.0 controller are unchanged
@@ -540,4 +604,4 @@ entries:
     urls:
     - https://github.com/mattgmoser/external-dns-porkbun-webhook/releases/download/external-dns-porkbun-webhook-0.1.0/external-dns-porkbun-webhook-0.1.0.tgz
     version: 0.1.0
-generated: "2026-09-26T15:52:06.911710622Z"
+generated: "2026-09-26T20:03:52.248411397Z"
