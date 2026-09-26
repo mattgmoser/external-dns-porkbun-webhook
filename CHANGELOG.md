@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.1
+
+### Security
+
+- Rebuild the webhook image on `gcr.io/distroless/static-debian13:nonroot`, clearing DLA-4792-1 (`tzdata` `2026b-0+deb12u1`, fixed in `2026c-0+deb12u1`), which had blocked the daily release scan of the `0.5.0` image on every published architecture since 2026-09-24. Debian 12 is now in LTS, where this update shipped, and the distroless Debian 12 base had still not picked it up as of 2026-09-26; the Debian 13 base ships `tzdata` `2026c-0+deb13u1` on `linux/amd64`, `linux/arm64`, and `linux/arm/v7`.
+
+### Changed
+
+- The runtime base moves from Debian 12 to Debian 13 distroless static. The webhook is a static `CGO_ENABLED=0` binary, so the base supplies only CA certificates, time-zone data, and the nonroot `65532` user; the binary, chart templates, and bundled ExternalDNS `v0.22.0` controller are unchanged.
+- A saved values file pins `external-dns.provider.webhook.image.tag`. Bump it to `0.5.1`, or re-export the chart values, when upgrading; otherwise the release keeps running the `0.5.0` image.
+
 ## 0.5.0
 
 ### Security

@@ -2,8 +2,8 @@ apiVersion: v2
 name: external-dns-porkbun-webhook
 description: ExternalDNS with the Porkbun webhook installed as a secure same-Pod sidecar
 type: application
-version: 0.5.0
-appVersion: "0.5.0"
+version: 0.5.1
+appVersion: "0.5.1"
 kubeVersion: ">=1.24.0-0"
 keywords:
   - external-dns
@@ -36,20 +36,14 @@ annotations:
   artifacthub.io/containsSecurityUpdates: "true"
   artifacthub.io/changes: |
     - kind: security
-      description: Rebuilt the webhook on Go 1.26.7, clearing 8 fixable HIGH Go standard library findings including CVE-2026-33818, CVE-2026-46600, and CVE-2026-56862
-    - kind: security
-      description: Pinned the bundled ExternalDNS controller to the patched v0.22.0 image by digest, removing 55 fixable findings that the v0.21.0 runtime image contributed to this package
+      description: Rebuilt the webhook image on the distroless Debian 13 base, which ships tzdata 2026c and clears the fixable DLA-4792-1 finding that the Debian 12 base carried
     - kind: changed
-      description: Updated to ExternalDNS v0.22.0 and verified every rendered argument against the v0.22.0 binary
-    - kind: changed
-      description: Pinned annotationPrefix to external-dns.alpha.kubernetes.io/ so the v0.22 annotation-prefix change cannot silently orphan or delete existing records
-    - kind: added
-      description: Chart now fails closed when annotationPrefix or policy is unset or unrecognised, both of which ExternalDNS v0.22 requires explicitly
+      description: The webhook runtime base moves from gcr.io/distroless/static-debian12 to gcr.io/distroless/static-debian13; the binary, chart templates, and bundled ExternalDNS v0.22.0 controller are unchanged
   artifacthub.io/images: |
     - name: external-dns
       image: registry.k8s.io/external-dns/external-dns:v0.22.0
     - name: porkbun-webhook
-      image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:0.5.0
+      image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:0.5.1
       platforms:
         - linux/amd64
         - linux/arm64
