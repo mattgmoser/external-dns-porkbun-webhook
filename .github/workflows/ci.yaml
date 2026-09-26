@@ -32,12 +32,12 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: v2.14.0
           args: --timeout=5m
       - name: test
         run: go test -race -coverprofile=coverage.out ./...
       - name: vulnerability scan
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
       # govulncheck reports reachable call paths. This complementary binary
       # scan catches actionable package-presence findings before a release tag
       # consumes an immutable image version.
@@ -66,7 +66,7 @@ jobs:
           # dependency, is checked on the pull request/main commit.
           args: >-
             --no-progress
-            --exclude '^https://github\.com/mattgmoser/external-dns-porkbun-webhook/blob/v0\.5\.1/'
+            --exclude '^https://github\.com/mattgmoser/external-dns-porkbun-webhook/blob/v0\.6\.0/'
             --exclude '^https://img\.shields\.io/endpoint\?url=https://artifacthub\.io/badge/repository/external-dns-porkbun-webhook$'
             './**/*.md'
             './.github/helm-repository/*.html'

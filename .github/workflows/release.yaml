@@ -46,12 +46,12 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: v2.14.0
           args: --timeout=5m
       - name: Test
         run: go test -race ./...
       - name: Vulnerability scan
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
       # Keep package-presence findings from consuming an immutable image
       # version. The post-push digest scan remains authoritative for the final
       # runtime image and every published architecture.
@@ -111,7 +111,7 @@ jobs:
           test "$expected" = "$example_image_tag"
           test "$expected" = "$wrapper_image_tag"
           grep -Fq "image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:${expected}" charts/external-dns-porkbun-webhook/Chart.yaml
-          grep -Fq 'version: 1.21.1' charts/external-dns-porkbun-webhook/Chart.lock
+          grep -Fq 'version: 1.22.0' charts/external-dns-porkbun-webhook/Chart.lock
           grep -Fq 'repositoryID: d669d36c-431f-4e11-826c-e11ca3dd4ec4' artifacthub-repo.yml
           if grep -Eq '^deprecated:[[:space:]]*true' charts/external-dns-porkbun-webhook/Chart.yaml; then
             echo 'active chart must not be marked deprecated' >&2
@@ -415,8 +415,8 @@ jobs:
           grep -Fqx "$dependency_chart" <<< "$archive_listing"
           dependency_version="$(tar xOf "$package" "$dependency_chart" | awk '$1 == "version:" {print $2; exit}')"
           dependency_app_version="$(tar xOf "$package" "$dependency_chart" | awk '$1 == "appVersion:" {print $2; exit}')"
-          test "$dependency_version" = '1.21.1'
-          test "$dependency_app_version" = '0.21.0'
+          test "$dependency_version" = '1.22.0'
+          test "$dependency_app_version" = '0.22.0'
           if grep -Fq 'artifacthub-repo.yml' <<< "$archive_listing"; then
             echo 'repository metadata must not be embedded in the chart package' >&2
             exit 1

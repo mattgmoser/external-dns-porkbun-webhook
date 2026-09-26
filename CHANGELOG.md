@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.0
+
+### Security
+
+- Pin the bundled ExternalDNS controller to `v0.23.0` by digest. The `v0.22.0` image now carries four fixable findings: CVE-2026-84445 (HIGH, `google.golang.org/grpc` `v1.83.1`), CVE-2026-56855 and CVE-2026-78662 (MEDIUM, `golang.org/x/crypto` `v0.55.0`), and DLA-4792-1 (`tzdata`). `v0.23.0` carries only DLA-4792-1, from upstream's own Debian 12 base. Artifact Hub grades this package on both images.
+- A values file saved from an earlier release pins the old controller digest, which still passes the chart's digest check. Re-export the values or bump `external-dns.image.tag` as well as the webhook tag when upgrading.
+
+### ExternalDNS v0.23.0
+
+- Update to ExternalDNS `v0.23.0` and the official chart `1.22.0`. The chart renders identically to `1.21.1` for these values apart from its version labels, and every argument it renders, including a `policy: sync` production configuration, was verified against the `v0.23.0` binary before pinning. The webhook provider protocol is unchanged.
+- Ownership TXT records are now deleted and replaced using the value stored in the zone (kubernetes-sigs/external-dns#6680). With `v0.22`, an ownership record whose stored value differed from the re-serialized labels was skipped on delete, because the provider matches deletes by value, and duplicated on update. New regression tests seed exactly that record and fail against `v0.22.0`.
+- Document the `v0.23.0` changes that reach this chart: the 32 MiB webhook body cap, the `--txt-encrypt-enabled` gzip change under Go 1.27, the new `--enable-legacy-annotation-prefix` migration flag, and the `crd` registry namespace change. None needs a values change with the TXT registry.
+- The rendered `app.kubernetes.io/version` label follows the dependency chart's appVersion and reads `0.22.0`; the running controller is the pinned `v0.23.0` image.
+
+### Build and dependencies
+
+- Rebuild the webhook on Go `1.27.1`. The `sigs.k8s.io/external-dns` `v0.23.0` module requires Go `1.27`, which also supersedes the Go `1.26.8` bug-fix release.
+- Update `github.com/sirupsen/logrus` to `v1.10.2` (no functional change) and the transitive modules `v0.23.0` requires.
+- Update CI to golangci-lint `v2.14.0` (Go `1.27` support arrived in `v2.13.0`) and govulncheck `v1.8.0`.
+
+### Testing
+
+- Re-point the upstream TXT registry integration suite at the `v0.23.0` registry and planner it now exercises.
+
 ## 0.5.1
 
 ### Security
