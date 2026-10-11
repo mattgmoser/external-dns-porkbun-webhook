@@ -66,7 +66,7 @@ choosing `sync`, which also deletes records no longer desired by Kubernetes.
 All provider and controller settings are nested under `external-dns` and are
 passed to the upstream chart. Use `helm show values ... --version 0.6.1` as
 shown above for this chart's immutable defaults. The dependency's exact
-[`external-dns` values](https://github.com/kubernetes-sigs/external-dns/blob/external-dns-helm-chart-1.23.0/charts/external-dns/values.yaml)
+[`external-dns` values](https://raw.githubusercontent.com/kubernetes-sigs/external-dns/external-dns-helm-chart-1.23.0/charts/external-dns/values.yaml)
 are also version-pinned.
 
 The supplied values isolate the Kubernetes API token to the ExternalDNS

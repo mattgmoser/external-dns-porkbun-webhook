@@ -44,6 +44,20 @@ check fail mount-from-external-golang $'FROM golang:1.27.2-alpine AS decoy\nFROM
 check pass copy-from-matching-golang $'FROM golang:1.27.2-alpine AS build\nFROM alpine:3.22\nCOPY --from=golang:1.27.2-alpine /usr/local/go /usr/local/go'
 check fail flags-only-after-golang-stage $'FROM golang:1.27.1-alpine AS old\nFROM golang:1.27.2-alpine AS build\nFROM --platform=linux/amd64'
 check fail escape-directive $'# escape=`\nFROM golang:1.27.2-alpine AS build'
+check fail escape-directive-mixed-case $'# EsCaPe=`\nFROM golang:1.27.2-alpine AS build'
+check fail escape-directive-indented $' # escape=`\nFROM golang:1.27.2-alpine AS build'
+check fail syntax-directive $'# syntax=example.invalid/frontend:1\nFROM golang:1.27.2-alpine AS build'
+check pass ordinary-leading-comments $'# Multi-stage build.\n# Builder: see go.mod.\nFROM golang:1.27.2-alpine AS build'
+check fail quoted-from-mismatch $'FROM golang:1.27.2-alpine AS decoy\nFROM "golang:1.27.1-alpine" AS build'
+check fail quoted-copy-from-mismatch $'FROM golang:1.27.2-alpine AS decoy\nFROM alpine:3.22\nCOPY --from="golang:1.27.1-alpine" /usr/local/go /usr/local/go'
+check fail quoted-mount-from-mismatch $'FROM golang:1.27.2-alpine AS decoy\nFROM alpine:3.22\nRUN --mount=type=bind,"from=golang:1.27.1-alpine",target=/go true'
+check fail empty-continuation-line $'FROM golang:1.27.2-alpine AS decoy\nFROM \\\n\n  golang:1.27.1-alpine AS build'
+check fail arg-variable-image $'ARG GO_IMAGE=golang:1.27.1-alpine\nFROM golang:1.27.2-alpine AS decoy\nFROM ${GO_IMAGE} AS build'
+check fail registry-prefixed-mismatch $'FROM golang:1.27.2-alpine AS decoy\nFROM registry-1.docker.io/library/golang:1.27.1-alpine AS build'
+check fail registry-port-untagged $'FROM golang:1.27.2-alpine AS decoy\nFROM registry.example:5000/golang AS build'
+check pass registry-port-matching $'FROM registry.example:5000/library/golang:1.27.2-alpine AS build'
+check fail onbuild-copy-from-mismatch $'FROM golang:1.27.2-alpine AS build\nONBUILD COPY --from=golang:1.27.1 /usr/local/go /usr/local/go'
+check pass stage-named-like-image $'FROM golang:1.27.2-alpine AS build\nFROM build AS test'
 
 if (( failures != 0 )); then
   echo "$failures verify-go-version case(s) failed" >&2
