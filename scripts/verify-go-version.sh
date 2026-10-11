@@ -11,7 +11,8 @@ set -euo pipefail
 # classify with certainty is rejected rather than skipped.
 #   - Parser directives other than the official frontend, check, and the
 #     default escape character can change how the file parses.
-#   - An image operand containing $ is resolved by build arguments at build time.
+#   - An image operand containing $, a quote or a backslash is rewritten by
+#     BuildKit's shell lexer (variables, quoting, escapes) before it is used.
 #   - Any reference whose repository's last path component is golang is a Go
 #     image, whatever its registry, and needs a literal MAJOR.MINOR.PATCH tag
 #     and no digest: BuildKit resolves a digest even when it names a different
@@ -42,7 +43,10 @@ builder_versions="$(
       ref = unquote(ref)
       if (ref == "") return 0
       if (tolower(ref) in stage) return 1
-      if (index(ref, "$") > 0) { print "!variable " ref; return 1 }
+      # BuildKit runs image operands through its shell lexer, which expands
+      # variables and removes quotes and escapes, so any of these characters
+      # can turn a harmless-looking token into a golang reference.
+      if (ref ~ /[$"\047\\]/) { print "!variable " ref; return 1 }
       name = ref
       if (index(name, "@") > 0) { digest = 1; sub(/@.*/, "", name) } else digest = 0
       tag = ""
@@ -143,7 +147,7 @@ while IFS= read -r builder_version; do
       status=1
       ;;
     '!variable '*)
-      echo "$dockerfile must name images literally; build arguments make this check unverifiable: ${builder_version#!variable }" >&2
+      echo "$dockerfile must name images literally, without variables, inner quotes or escapes: ${builder_version#!variable }" >&2
       status=1
       ;;
     '!unversioned '*)
