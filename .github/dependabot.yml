@@ -2,12 +2,20 @@ version: 2
 updates:
   - package-ecosystem: "gomod"
     directory: "/"
-    # The daily security workflow rescans the released image at 09:17 UTC, and
-    # any fixable finding fails it. Check daily, ahead of that scan, so a
-    # module security fix arrives as a PR rather than as a red scan.
+    # The security workflow rescans the released image every day at 09:17 UTC,
+    # and any fixable finding fails it. Check every day, ahead of that scan, so
+    # a module security fix arrives as a PR rather than as a red scan. The
+    # "daily" interval skips weekends, hence cron.
     schedule:
-      interval: "daily"
-      time: "05:00"
+      interval: "cron"
+      cronjob: "0 5 * * *"
+      timezone: "Etc/UTC"
+    # Version updates otherwise wait out a default three-day cooldown, which
+    # would hold a Thursday security fix until the following week. Waive it only
+    # for the golang.org/x modules; direct dependencies keep the cooldown.
+    cooldown:
+      exclude:
+        - "golang.org/x/*"
     # Keep core Go changes individually reviewable; ExternalDNS updates can
     # alter provider behavior and should not be hidden inside a broad bundle.
     open-pull-requests-limit: 3
@@ -45,14 +53,19 @@ updates:
         patterns:
           - "*"
 
-  # The golang builder carries the Go toolchain, so its security releases need
-  # the same daily cadence as the modules. A golang bump must also move the
-  # go.mod toolchain line; scripts/verify-go-version.sh fails CI until it does.
+  # The golang builder carries the Go toolchain and the distroless base carries
+  # the runtime's OS packages, so both need the same cadence as the modules,
+  # without the default cooldown. A golang bump must also move the go.mod
+  # toolchain line; scripts/verify-go-version.sh fails CI until it does.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
-      interval: "daily"
-      time: "05:00"
+      interval: "cron"
+      cronjob: "0 5 * * *"
+      timezone: "Etc/UTC"
+    cooldown:
+      exclude:
+        - "*"
     open-pull-requests-limit: 1
     groups:
       container-images:

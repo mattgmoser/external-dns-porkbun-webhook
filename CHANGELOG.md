@@ -16,9 +16,9 @@
 
 ### Build and dependencies
 
-- Name the Go builder image as a literal tag (`golang:1.27.2-alpine`). Dependabot cannot parse the previous `ARG`-interpolated `FROM`, so it never proposed Go security releases. A new CI check, `scripts/verify-go-version.sh`, requires the builder image and the `go.mod` toolchain line to name the same Go release, because CI tests with the latter and the published image is built with the former.
+- Name the Go builder image as a literal tag (`golang:1.27.2-alpine`). Dependabot cannot parse the previous `ARG`-interpolated `FROM`, so it never proposed Go security releases. A new CI check, `scripts/verify-go-version.sh`, requires every `golang` build stage and the `go.mod` toolchain line to name the same Go release, because CI tests with the latter and the published image is built with the former.
 - Fix the weekly Dependabot Helm job, which has failed since 2026-08-30. It also tried to update the controller image pinned in `values.yaml`, and its request to `registry.k8s.io` fails. It now manages only the chart dependency; the release process sets both image tags.
-- Check Go modules and container images daily, ahead of the daily release scan, and include the indirect `golang.org/x/*` modules that are linked into the binary.
+- Check Go modules and container images every day at 05:00 UTC, ahead of the daily release scan, and include the indirect `golang.org/x/*` modules that are linked into the binary. Dependabot's `daily` interval skips weekends, so this uses a cron schedule. Its default three-day cooldown is waived for `golang.org/x/*` and the base images only, so a security release does not wait out the week; direct dependencies keep it.
 
 ## 0.6.0
 
