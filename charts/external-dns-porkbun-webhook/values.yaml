@@ -13,12 +13,11 @@ migration:
   acknowledgeControllerReplacement: false
 
 external-dns:
-  # The official chart dependency is 1.22.0, whose appVersion is ExternalDNS
-  # 0.22.0. That image now carries fixable findings, including a HIGH in
-  # google.golang.org/grpc, and no chart release ships 0.23.0 yet. Pin the
-  # controller image to the 0.23.0 release, by digest, rather than publishing a
-  # package whose runtime half is known-vulnerable. Every argument this chart
-  # renders was verified against the 0.23.0 binary.
+  # The official chart dependency is 1.23.0, whose appVersion is ExternalDNS
+  # 0.23.0. Its default is the floating v0.23.0 tag, so pin that release by
+  # digest: a published package must not be able to drift onto a different
+  # controller runtime. Every argument this chart renders was verified against
+  # the 0.23.0 binary.
   image:
     repository: registry.k8s.io/external-dns/external-dns
     tag: "v0.23.0@sha256:1854499e2b08cee47c40a08e356bff20dcb192dbcfde8378fc3f900f12cad5a3"
@@ -38,7 +37,7 @@ external-dns:
     webhook:
       image:
         repository: ghcr.io/mattgmoser/external-dns-porkbun-webhook
-        tag: "0.6.0"
+        tag: "0.6.1"
         pullPolicy: IfNotPresent
       env:
         - name: PORKBUN_API_KEY

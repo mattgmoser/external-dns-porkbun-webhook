@@ -2,18 +2,38 @@ version: 2
 updates:
   - package-ecosystem: "gomod"
     directory: "/"
+    # The daily security workflow rescans the released image at 09:17 UTC, and
+    # any fixable finding fails it. Check daily, ahead of that scan, so a
+    # module security fix arrives as a PR rather than as a red scan.
     schedule:
-      interval: "weekly"
+      interval: "daily"
+      time: "05:00"
     # Keep core Go changes individually reviewable; ExternalDNS updates can
     # alter provider behavior and should not be hidden inside a broad bundle.
     open-pull-requests-limit: 3
+    allow:
+      - dependency-type: "direct"
+      # golang.org/x/net and its siblings are indirect requirements here but
+      # are linked into the binary, and Dependabot skips indirect modules
+      # unless they are allowed by name.
+      - dependency-name: "golang.org/x/*"
+    groups:
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
 
-  # Keep the wrapper aligned with supported ExternalDNS chart releases.
+  # Keep the wrapper aligned with supported ExternalDNS chart releases. Only the
+  # chart dependency is managed here: both image tags in values.yaml are set by
+  # the release process (the controller is pinned by digest after its rendered
+  # arguments are verified), and looking them up fails the whole job because
+  # Dependabot doubles the registry host in the registry.k8s.io request path.
   - package-ecosystem: "helm"
     directory: "/charts/external-dns-porkbun-webhook"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 1
+    allow:
+      - dependency-name: "external-dns"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -25,10 +45,14 @@ updates:
         patterns:
           - "*"
 
+  # The golang builder carries the Go toolchain, so its security releases need
+  # the same daily cadence as the modules. A golang bump must also move the
+  # go.mod toolchain line; scripts/verify-go-version.sh fails CI until it does.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "daily"
+      time: "05:00"
     open-pull-requests-limit: 1
     groups:
       container-images:
