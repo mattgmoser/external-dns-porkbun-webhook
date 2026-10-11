@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.1
+
+### Security
+
+- Rebuild the webhook on Go `1.27.2` and `golang.org/x/net` `v0.60.0`, clearing the 18 fixable findings that have failed the daily release scan of the `0.6.0` image on every published architecture since 2026-10-09:
+  - Go standard library `1.27.1`: CVE-2026-78667, CVE-2026-78669 and CVE-2026-97031 (HIGH); CVE-2026-56866, CVE-2026-78663, CVE-2026-94439, CVE-2026-94448 and CVE-2026-97032 (MEDIUM); CVE-2026-56857 (LOW); and CVE-2026-78659, CVE-2026-78660, CVE-2026-94440 and CVE-2026-97030 (no severity assigned).
+  - `golang.org/x/net` `v0.59.0`: CVE-2026-78669 (HIGH); CVE-2026-78663 and CVE-2026-97032 (MEDIUM); and CVE-2026-78659 and CVE-2026-78660 (no severity assigned).
+- The bundled ExternalDNS `v0.23.0` controller is unchanged. Its image is built with Go `1.27.0` and `golang.org/x/net` `v0.59.0`, so it now reports the same upstream findings as well as DLA-4792-1 (`tzdata`) from its Debian 12 base. No rebuilt official release exists yet: `v0.23.0` is still the newest tag on `registry.k8s.io`. It stays pinned by digest, and it sets this package's Artifact Hub security grade until upstream ships one. Moving back to `v0.22.0` would be worse: it has more findings, and it restores the ownership-record orphaning that `0.6.0` fixed.
+
+### Changed
+
+- Update the official ExternalDNS chart dependency to `1.23.0`. Its templates, default values and schema are identical to `1.22.0`, so rendered manifests change only in their `helm.sh/chart` and `app.kubernetes.io/version` labels. The version label now reports the running `0.23.0` controller rather than `0.22.0`, and neither label is part of the Deployment selector or Pod template, so upgrading does not restart the Pod for this change.
+- Pin the distroless runtime base by index digest. It is the same image `0.6.0` was built from, so a local pre-release image scan and the release build cannot pick up different bases.
+
+### Build and dependencies
+
+- Name the Go builder image as a literal tag (`golang:1.27.2-alpine`). Dependabot cannot parse the previous `ARG`-interpolated `FROM`, so it never proposed Go security releases. A new CI check, `scripts/verify-go-version.sh`, requires every `golang` image the Dockerfile builds with (each `FROM` stage, and any image named by `--from`) and the `go.mod` toolchain line to name the same Go release, because CI tests with the latter and the published image is built with the former. It fails closed on Dockerfile forms it cannot verify: unofficial parser directives, image names containing variables, inner quotes or escapes (which BuildKit's shell lexer rewrites), digest-qualified `golang` references (BuildKit resolves the digest even when it names a different release than the tag), and any other mention of `golang` in an instruction.
+- Fix the weekly Dependabot Helm job, which has failed since 2026-08-30. It also tried to update the controller image pinned in `values.yaml`, and its request to `registry.k8s.io` fails. It now manages only the chart dependency; the release process sets both image tags.
+- Check Go modules and container images every day at 05:00 UTC, ahead of the daily release scan, and include the indirect `golang.org/x/*` modules that are linked into the binary. Dependabot's `daily` interval skips weekends, so this uses a cron schedule. Its default three-day cooldown is waived for `golang.org/x/*` and the base images only, so a security release does not wait out the week; direct dependencies keep it.
+
 ## 0.6.0
 
 ### Security

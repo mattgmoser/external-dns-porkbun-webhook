@@ -13,6 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Dockerfile and go.mod use the same Go release
+        run: |
+          scripts/verify-go-version_test.sh
+          scripts/verify-go-version.sh
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -66,7 +70,7 @@ jobs:
           # dependency, is checked on the pull request/main commit.
           args: >-
             --no-progress
-            --exclude '^https://github\.com/mattgmoser/external-dns-porkbun-webhook/blob/v0\.6\.0/'
+            --exclude '^https://github\.com/mattgmoser/external-dns-porkbun-webhook/blob/v0\.6\.1/'
             --exclude '^https://img\.shields\.io/endpoint\?url=https://artifacthub\.io/badge/repository/external-dns-porkbun-webhook$'
             './**/*.md'
             './.github/helm-repository/*.html'

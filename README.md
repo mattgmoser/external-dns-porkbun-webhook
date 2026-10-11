@@ -48,7 +48,7 @@ Add the repository and export the chart's version-pinned values:
 helm repo add edns-porkbun https://mattgmoser.github.io/external-dns-porkbun-webhook
 helm repo update
 helm show values edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.6.0 > external-dns-porkbun-values.yaml
+  --version 0.6.1 > external-dns-porkbun-values.yaml
 ```
 
 Change all of these in `external-dns-porkbun-values.yaml` before installing:
@@ -64,7 +64,7 @@ Never change `txtOwnerId`, `txtPrefix`, or `txt-wildcard-replacement` casually a
 ```sh
 helm upgrade --install external-dns \
   edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.6.0 \
+  --version 0.6.1 \
   --namespace external-dns \
   --values external-dns-porkbun-values.yaml
 ```
@@ -94,7 +94,7 @@ Do not use the generic install command above to migrate an existing standalone-c
 Choose one controller path:
 
 - If ExternalDNS is already managed directly with the official chart, keep that release. Add this project's version-pinned [`docs/external-dns-values.yaml`](docs/external-dns-values.yaml) sidecar settings to it, roll out the same-Pod configuration, and then remove the old standalone webhook release.
-- To adopt this wrapper, stop and remove the separately managed ExternalDNS controller and the old standalone webhook release, then install `0.6.0` with the preserved ownership settings and independent credential Secret. Never overlap two writable controllers for the same names.
+- To adopt this wrapper, stop and remove the separately managed ExternalDNS controller and the old standalone webhook release, then install `0.6.1` with the preserved ownership settings and independent credential Secret. Never overlap two writable controllers for the same names.
 
 As a final guard, the first in-place Helm upgrade from `0.3.0` or earlier is rejected unless `migration.acknowledgeControllerReplacement=true` is explicitly set. That acknowledgement only confirms that you completed the controller handoff; it does not perform the migration. A fresh `0.4.0` or later install, or an acknowledged migration, creates a release-owned topology marker, so later routine upgrades of that release do not need the acknowledgement again.
 
@@ -150,13 +150,14 @@ Re-export the values on upgrade, or bump both tags by hand, and diff your copy
 against the new defaults:
 
 ```sh
-helm show values edns-porkbun/external-dns-porkbun-webhook --version 0.6.0 \
+helm show values edns-porkbun/external-dns-porkbun-webhook --version 0.6.1 \
   | diff -u external-dns-porkbun-values.yaml - || true
 ```
 
 The chart pins the bundled ExternalDNS controller image to an exact digest and
 refuses to render if that pin is removed or replaced with a floating tag,
-because the dependency chart's own default is the older, vulnerable image.
+because a floating tag lets the controller runtime change without a chart
+release.
 
 ### Upgrading to ExternalDNS v0.23.0
 
@@ -168,7 +169,7 @@ Chart `0.6.0` moves the bundled controller from ExternalDNS v0.22.0 to v0.23.0, 
 - Upstream added `--enable-legacy-annotation-prefix`, which also reads `external-dns.alpha.kubernetes.io/` annotations during a prefix migration. This chart does not set it, because its pinned prefix already preserves behaviour.
 - The `crd` registry now needs `--crd-registry-namespace` when upgrading from v0.22.0. This chart uses the TXT registry.
 
-The rendered `app.kubernetes.io/version` label comes from the dependency chart's appVersion, so it reads `0.22.0`; the running controller is the pinned v0.23.0 image. Pass your values file explicitly rather than using `--reuse-values`, for the reason given below.
+Chart `0.6.1` moves the dependency to the official chart `1.23.0`, whose appVersion is `0.23.0`, so the rendered `app.kubernetes.io/version` label now matches the pinned v0.23.0 controller. Pass your values file explicitly rather than using `--reuse-values`, for the reason given below.
 
 ### Upgrading to ExternalDNS v0.22.0
 
@@ -180,12 +181,12 @@ To move to the new prefix, migrate your annotations first, then set it deliberat
 
 ```sh
 helm upgrade external-dns edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.6.0 \
+  --version 0.6.1 \
   --values external-dns-porkbun-values.yaml \
   --set-string external-dns.annotationPrefix=external-dns.kubernetes.io/
 ```
 
-Do not use `--reuse-values` for this upgrade. It replaces the new chart's defaults with the previous release's values, so the release would report chart `0.6.0` while still running the **old** ExternalDNS and webhook images -- defeating the point of a security release. Pass your values file explicitly, as above.
+Do not use `--reuse-values` for this upgrade. It replaces the new chart's defaults with the previous release's values, so the release would report chart `0.6.1` while still running the **old** ExternalDNS and webhook images -- defeating the point of a security release. Pass your values file explicitly, as above.
 
 Upstream's [version update playbook](https://kubernetes-sigs.github.io/external-dns/latest/docs/version-update-playbook/) recommends a dry run first. Set `DRY_RUN` in your values file rather than with `--set`, because a bare `--set ...value=true` renders a YAML boolean and Kubernetes requires `EnvVar.value` to be a string:
 
@@ -237,7 +238,7 @@ The bundled official ExternalDNS chart can add the webhook endpoint to its `Serv
 
 ## Development
 
-Requires Go 1.26.1 or newer. `go.mod` selects the security-patched Go 1.26.5 toolchain used by CI and the container build when automatic toolchain selection is enabled.
+Requires Go 1.27.0 or newer, because `sigs.k8s.io/external-dns` v0.23.0 does. The `go.mod` toolchain line selects the security-patched Go 1.27.2 toolchain, which CI builds and tests with; the Dockerfile builder must name the same version (`scripts/verify-go-version.sh` checks both).
 
 ```sh
 make build            # build local binary

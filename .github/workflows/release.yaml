@@ -26,6 +26,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+      - name: Dockerfile and go.mod use the same Go release
+        run: |
+          scripts/verify-go-version_test.sh
+          scripts/verify-go-version.sh
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -111,7 +115,7 @@ jobs:
           test "$expected" = "$example_image_tag"
           test "$expected" = "$wrapper_image_tag"
           grep -Fq "image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:${expected}" charts/external-dns-porkbun-webhook/Chart.yaml
-          grep -Fq 'version: 1.22.0' charts/external-dns-porkbun-webhook/Chart.lock
+          grep -Fq 'version: 1.23.0' charts/external-dns-porkbun-webhook/Chart.lock
           grep -Fq 'repositoryID: d669d36c-431f-4e11-826c-e11ca3dd4ec4' artifacthub-repo.yml
           if grep -Eq '^deprecated:[[:space:]]*true' charts/external-dns-porkbun-webhook/Chart.yaml; then
             echo 'active chart must not be marked deprecated' >&2
@@ -415,8 +419,8 @@ jobs:
           grep -Fqx "$dependency_chart" <<< "$archive_listing"
           dependency_version="$(tar xOf "$package" "$dependency_chart" | awk '$1 == "version:" {print $2; exit}')"
           dependency_app_version="$(tar xOf "$package" "$dependency_chart" | awk '$1 == "appVersion:" {print $2; exit}')"
-          test "$dependency_version" = '1.22.0'
-          test "$dependency_app_version" = '0.22.0'
+          test "$dependency_version" = '1.23.0'
+          test "$dependency_app_version" = '0.23.0'
           if grep -Fq 'artifacthub-repo.yml' <<< "$archive_listing"; then
             echo 'repository metadata must not be embedded in the chart package' >&2
             exit 1
