@@ -5,6 +5,70 @@ entries:
       artifacthub.io/category: networking
       artifacthub.io/changes: |
         - kind: security
+          description: Rebuilt the webhook on Go 1.27.2 and golang.org/x/net v0.60.0, clearing all 18 fixable findings the 0.6.0 image now reports, including CVE-2026-78667, CVE-2026-78669 and CVE-2026-97031 (HIGH)
+        - kind: security
+          description: The bundled ExternalDNS v0.23.0 controller is unchanged and now reports the same upstream Go standard library and golang.org/x/net findings; no rebuilt official release exists yet, so it stays pinned by digest and sets this package's security grade until upstream ships one
+        - kind: changed
+          description: Updated the official ExternalDNS chart dependency to 1.23.0, whose templates are identical to 1.22.0; rendered manifests change only in version labels, which now report the running 0.23.0 controller
+        - kind: changed
+          description: Pinned the distroless runtime base by digest, using the same image 0.6.0 was built from
+      artifacthub.io/containsSecurityUpdates: "true"
+      artifacthub.io/images: |
+        - name: external-dns
+          image: registry.k8s.io/external-dns/external-dns:v0.23.0
+        - name: porkbun-webhook
+          image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:0.6.1
+          platforms:
+            - linux/amd64
+            - linux/arm64
+            - linux/arm/v7
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/links: |
+        - name: source
+          url: https://github.com/mattgmoser/external-dns-porkbun-webhook
+        - name: external-dns
+          url: https://github.com/kubernetes-sigs/external-dns
+        - name: porkbun api
+          url: https://porkbun.com/api/json/v3/documentation
+        - name: support
+          url: https://github.com/mattgmoser/external-dns-porkbun-webhook/issues
+      artifacthub.io/recommendations: |
+        - url: https://artifacthub.io/packages/helm/external-dns/external-dns
+      artifacthub.io/signKey: |
+        fingerprint: 1CD080E5799F3F24960E791966B9EDBB9FE0C877
+        url: https://github.com/mattgmoser/external-dns-porkbun-webhook/raw/main/charts/external-dns-porkbun-webhook/keys/66B9EDBB9FE0C877.asc
+    apiVersion: v2
+    appVersion: 0.6.1
+    created: "2026-10-11T03:09:46.21606751Z"
+    dependencies:
+    - name: external-dns
+      repository: https://kubernetes-sigs.github.io/external-dns/
+      version: 1.23.0
+    description: ExternalDNS with the Porkbun webhook installed as a secure same-Pod
+      sidecar
+    digest: 9b79ad8bbbd4de67eeefffa2865f1f6f59a6374a956abd41eaf182951f59fab1
+    home: https://github.com/mattgmoser/external-dns-porkbun-webhook
+    icon: https://raw.githubusercontent.com/kubernetes-sigs/external-dns/master/docs/img/external-dns.png
+    keywords:
+    - external-dns
+    - porkbun
+    - dns
+    - webhook
+    kubeVersion: '>=1.24.0-0'
+    maintainers:
+    - name: mattgmoser
+      url: https://github.com/mattgmoser
+    name: external-dns-porkbun-webhook
+    sources:
+    - https://github.com/mattgmoser/external-dns-porkbun-webhook
+    type: application
+    urls:
+    - https://github.com/mattgmoser/external-dns-porkbun-webhook/releases/download/external-dns-porkbun-webhook-0.6.1/external-dns-porkbun-webhook-0.6.1.tgz
+    version: 0.6.1
+  - annotations:
+      artifacthub.io/category: networking
+      artifacthub.io/changes: |
+        - kind: security
           description: Pinned the bundled ExternalDNS controller to v0.23.0 by digest, clearing the fixable findings the v0.22.0 image now carries, including CVE-2026-84445 (HIGH, google.golang.org/grpc) and CVE-2026-56855 and CVE-2026-78662 (golang.org/x/crypto)
         - kind: changed
           description: Updated to ExternalDNS v0.23.0 and the official chart 1.22.0, and verified every rendered argument against the v0.23.0 binary
@@ -604,4 +668,4 @@ entries:
     urls:
     - https://github.com/mattgmoser/external-dns-porkbun-webhook/releases/download/external-dns-porkbun-webhook-0.1.0/external-dns-porkbun-webhook-0.1.0.tgz
     version: 0.1.0
-generated: "2026-09-26T20:03:52.248411397Z"
+generated: "2026-10-11T03:09:46.216166273Z"
