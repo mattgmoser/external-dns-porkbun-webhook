@@ -35,6 +35,15 @@ check fail untagged 'FROM golang AS build'
 check fail second-stage-mismatch $'FROM golang:1.27.2-alpine AS tools\nFROM golang:1.27.1-alpine AS build'
 check fail no-golang-stage 'FROM alpine:3.22'
 check fail golang-only-in-flag-value 'FROM --platform=golang:1.27.2 alpine:3.22 AS build'
+check pass continued-from $'FROM --platform=$BUILDPLATFORM \\\n  golang:1.27.2-alpine AS build'
+check fail continued-second-stage-mismatch $'FROM golang:1.27.2-alpine AS tools\nFROM --platform=$BUILDPLATFORM \\\n  golang:1.27.1-alpine AS build'
+check fail continued-with-comment-line $'FROM golang:1.27.2-alpine AS tools\nFROM \\\n# note\n  golang:1.27.1-alpine AS build'
+check pass copy-from-stage $'FROM golang:1.27.2-alpine AS build\nFROM alpine:3.22\nCOPY --from=build /out /out'
+check fail copy-from-external-golang $'FROM golang:1.27.2-alpine AS decoy\nFROM alpine:3.22 AS build\nCOPY --from=golang:1.27.1-alpine /usr/local/go /usr/local/go'
+check fail mount-from-external-golang $'FROM golang:1.27.2-alpine AS decoy\nFROM alpine:3.22 AS build\nRUN --mount=type=bind,from=golang:1.27.1-alpine,source=/usr/local/go,target=/go true'
+check pass copy-from-matching-golang $'FROM golang:1.27.2-alpine AS build\nFROM alpine:3.22\nCOPY --from=golang:1.27.2-alpine /usr/local/go /usr/local/go'
+check fail flags-only-after-golang-stage $'FROM golang:1.27.1-alpine AS old\nFROM golang:1.27.2-alpine AS build\nFROM --platform=linux/amd64'
+check fail escape-directive $'# escape=`\nFROM golang:1.27.2-alpine AS build'
 
 if (( failures != 0 )); then
   echo "$failures verify-go-version case(s) failed" >&2

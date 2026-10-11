@@ -10,26 +10,61 @@ set -euo pipefail
 dockerfile=${1:-Dockerfile}
 gomod=${2:-go.mod}
 
-# One line per golang stage: the version from its image reference, or the raw
-# reference when it is not a literal MAJOR.MINOR.PATCH tag. Only the image
-# operand is inspected, after any --flag options, so stage names, comments and
-# flag values cannot be mistaken for it.
+# One line per golang image the Dockerfile builds with: the version from its
+# reference, or the raw reference when it is not a literal MAJOR.MINOR.PATCH
+# tag. Backslash continuations are joined into logical instructions first.
+# Only image operands are inspected: the FROM operand after any --flag options,
+# and --from= / --mount from= values, which may name an image directly. Stage
+# names, comments and other flag values cannot be mistaken for one. A custom
+# escape parser directive changes continuation syntax, so it fails closed.
 builder_versions="$(
   awk '
-    toupper($1) == "FROM" {
-      for (i = 2; i <= NF && $i ~ /^--/; i++) {}
-      ref = $i
-      if (ref !~ /^((docker\.io\/)?library\/)?golang(:|@|$)/) next
+    function golang_version(ref,    version) {
+      if (ref !~ /^((docker\.io\/)?library\/)?golang(:|@|$)/) return ""
       version = ref
       sub(/^((docker\.io\/)?library\/)?golang:?/, "", version)
       sub(/@.*/, "", version)
       sub(/-.*/, "", version)
-      print (version ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ ? version : ref)
+      return (version ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ ? version : ref)
+    }
+    !instructions && /^#[[:space:]]*escape[[:space:]]*=/ { print "!escape"; exit }
+    /^[[:space:]]*(#|$)/ { next }
+    {
+      instructions = 1
+      line = $0
+      while (line ~ /\\[[:space:]]*$/) {
+        sub(/\\[[:space:]]*$/, "", line)
+        if ((getline continuation) <= 0) break
+        if (continuation ~ /^[[:space:]]*#/) { line = line "\\"; continue }
+        line = line " " continuation
+      }
+      n = split(line, raw, /[[:space:]]+/)
+      split("", token)
+      count = 0
+      for (i = 1; i <= n; i++) if (raw[i] != "") token[++count] = raw[i]
+      if (toupper(token[1]) == "FROM") {
+        for (i = 2; i <= count && token[i] ~ /^--/; i++) {}
+        if (i <= count && (version = golang_version(token[i])) != "") print version
+      }
+      for (i = 2; i <= count && token[i] ~ /^--/; i++) {
+        ref = ""
+        if (token[i] ~ /^--from=/) {
+          ref = substr(token[i], 8)
+        } else if (token[i] ~ /^--mount=/) {
+          m = split(substr(token[i], 9), option, ",")
+          for (j = 1; j <= m; j++) if (option[j] ~ /^from=/) ref = substr(option[j], 6)
+        }
+        if (ref != "" && (version = golang_version(ref)) != "") print version
+      }
     }
   ' "$dockerfile"
 )"
 toolchain_version="$(awk '$1 == "toolchain" { sub(/^go/, "", $2); print $2; exit }' "$gomod")"
 
+if [[ "$builder_versions" == *'!escape'* ]]; then
+  echo "$dockerfile sets an escape parser directive, which this check does not parse; keep the default backslash escape" >&2
+  exit 1
+fi
 if [[ -z "$builder_versions" ]]; then
   echo "$dockerfile has no golang build stage" >&2
   exit 1
