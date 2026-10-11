@@ -52,6 +52,8 @@ check fail quoted-from-mismatch $'FROM golang:1.27.2-alpine AS decoy\nFROM "gola
 check fail quoted-copy-from-mismatch $'FROM golang:1.27.2-alpine AS decoy\nFROM alpine:3.22\nCOPY --from="golang:1.27.1-alpine" /usr/local/go /usr/local/go'
 check fail quoted-mount-from-mismatch $'FROM golang:1.27.2-alpine AS decoy\nFROM alpine:3.22\nRUN --mount=type=bind,"from=golang:1.27.1-alpine",target=/go true'
 check fail empty-continuation-line $'FROM golang:1.27.2-alpine AS decoy\nFROM \\\n\n  golang:1.27.1-alpine AS build'
+check fail split-token-continuation $'FROM golang:1.27.2-alpine AS decoy\nFROM gol\\\nang:1.27.1-alpine AS build'
+check pass split-token-continuation-matching $'FROM gol\\\nang:1.27.2-alpine AS build'
 check fail arg-variable-image $'ARG GO_IMAGE=golang:1.27.1-alpine\nFROM golang:1.27.2-alpine AS decoy\nFROM ${GO_IMAGE} AS build'
 check fail registry-prefixed-mismatch $'FROM golang:1.27.2-alpine AS decoy\nFROM registry-1.docker.io/library/golang:1.27.1-alpine AS build'
 check fail registry-port-untagged $'FROM golang:1.27.2-alpine AS decoy\nFROM registry.example:5000/golang AS build'

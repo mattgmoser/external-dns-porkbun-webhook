@@ -21,8 +21,9 @@ set -euo pipefail
 #     image reference this check does not recognise.
 # Image operands are the FROM operand after its --flags, and every --from= or
 # --mount from= value. Earlier stage names are not images. Backslash
-# continuations are joined, dropping the blank and comment lines Docker ignores
-# inside them; quotes around tokens are removed; a leading BOM is stripped.
+# continuations are joined exactly as Docker joins them, dropping the blank and
+# comment lines it ignores inside them. Quotes around tokens are removed, and a
+# leading BOM is stripped.
 
 dockerfile=${1:-Dockerfile}
 gomod=${2:-go.mod}
@@ -81,7 +82,9 @@ builder_versions="$(
         sub(/\\[[:space:]]*$/, "", line)
         while ((more = getline continuation) > 0 && continuation ~ /^[[:space:]]*(#|$)/) {}
         if (more <= 0) break
-        line = line " " continuation
+        # Docker joins continued lines directly, without adding whitespace,
+        # so a backslash can split a single token across lines.
+        line = line continuation
       }
       n = split(line, raw, /[[:space:]]+/)
       split("", token)
