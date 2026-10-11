@@ -27,7 +27,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Dockerfile and go.mod use the same Go release
-        run: scripts/verify-go-version.sh
+        run: |
+          scripts/verify-go-version_test.sh
+          scripts/verify-go-version.sh
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
