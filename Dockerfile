@@ -5,7 +5,7 @@
 # FROM, so a variable here silently hides Go security releases from it. It must
 # match the go.mod toolchain line, which CI builds and tests with
 # (scripts/verify-go-version.sh enforces this).
-FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS build
 WORKDIR /src
 
 # Cache dependencies
