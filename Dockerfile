@@ -5,7 +5,7 @@
 # FROM, so a variable here silently hides Go security releases from it. It must
 # match the go.mod toolchain line, which CI builds and tests with
 # (scripts/verify-go-version.sh enforces this).
-FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS build
 WORKDIR /src
 
 # Cache dependencies
@@ -23,7 +23,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v}
 ## Runtime: distroless static (no shell, no package manager).
 # Pinned by index digest so a local pre-tag image scan and the release build use
 # the same base. Dependabot proposes digest refreshes for this tag.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:516757106de35205efb70b91ba03f6f1298424a0678c603255cf2852a7000087
 COPY --from=build /out/external-dns-porkbun-webhook /usr/local/bin/external-dns-porkbun-webhook
 USER 65532:65532
 EXPOSE 8888 8080
