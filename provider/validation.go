@@ -176,11 +176,15 @@ func effectiveTTL(ttl endpoint.TTL) int64 {
 	return int64(ttl)
 }
 
+// adjustEndpoint validates and normalizes a desired endpoint without changing
+// its DNSName. The ExternalDNS webhook client re-attaches source objects by
+// Endpoint.Key(), so a rewritten name would drop that object's events and
+// status. The planner already compares names case- and trailing-dot-
+// insensitively, and ApplyChanges canonicalizes them in validateEndpoint.
 func (p *Provider) adjustEndpoint(ep *endpoint.Endpoint, canonicalName string) error {
 	if err := validateDNSName(canonicalName, true); err != nil {
 		return fmt.Errorf("invalid DNS name %q: %w", ep.DNSName, err)
 	}
-	ep.DNSName = canonicalName
 	ep.RecordType = strings.ToUpper(strings.TrimSpace(ep.RecordType))
 	if ep.RecordType == "ALIAS" {
 		return fmt.Errorf("record type ALIAS must be represented as CNAME with providerSpecific alias=true")
@@ -198,7 +202,7 @@ func (p *Provider) adjustEndpoint(ep *endpoint.Endpoint, canonicalName string) e
 	if err := normalizeProviderSpecific(ep, true); err != nil {
 		return err
 	}
-	if ep.RecordType == endpoint.RecordTypeCNAME && ep.DNSName == p.domain {
+	if ep.RecordType == endpoint.RecordTypeCNAME && canonicalName == p.domain {
 		ep.SetProviderSpecificProperty(providerSpecificAlias, "true")
 	}
 	if len(ep.Targets) == 0 {

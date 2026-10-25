@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1
+
+### Fixed
+
+- Keep each desired endpoint's `DNSName` as the source spelled it in `AdjustEndpoints`. The webhook used to lowercase names and strip a final dot there. ExternalDNS's webhook client stores each endpoint's source objects by name, record type and set identifier, and re-attaches them only to adjusted endpoints with the same values. So a hostname such as `App.example.com`, or `app.example.com.` from a `DNSEndpoint`, lost its source object. ExternalDNS then emitted no `RecordReady` or `RecordError` event for it (`--events-emit`), and the `v0.24` `DNSEndpoint` status reporter skipped it. DNS records were always written correctly, and lowercase hostnames, which includes every Ingress host, were never affected. The rewrite dates from `0.3.0`, but had no effect until ExternalDNS `v0.22.0`, bundled since `0.5.0`, began carrying source objects across the webhook.
+- Names still reach Porkbun lowercased and without a final dot, because `ApplyChanges` canonicalises every endpoint before writing. ExternalDNS `v0.24.0`'s planner and domain filters compare names case- and trailing-dot-insensitively, so a mixed-case name does not cause repeated updates. New tests run the upstream webhook client and TXT registry against this provider to confirm both. Record types and targets are still canonicalised in `AdjustEndpoints`.
+
 ## 0.7.0
 
 ### Security

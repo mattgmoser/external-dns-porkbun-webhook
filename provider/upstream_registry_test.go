@@ -956,6 +956,71 @@ func TestExternalDNSV023TXTRegistryUpdatesStoredOwnershipValue(t *testing.T) {
 	}
 }
 
+// AdjustEndpoints keeps the source's spelling of a name so the ExternalDNS
+// client can re-attach its source objects. The planner and registry must still
+// converge on the lowercase records Porkbun stores, ownership TXT included,
+// rather than planning the same create on every cycle.
+func TestExternalDNSV023TXTRegistryConvergesSourceNameSpelling(t *testing.T) {
+	const ownerID = "registry-name-spelling-test"
+	for _, name := range []string{"App.Example.com", "app.example.com."} {
+		t.Run(name, func(t *testing.T) {
+			fake := newFakePorkbun()
+			prov := newTestProvider(t, fake)
+			registry, err := txtregistry.New(&externaldns.Config{
+				TXTOwnerID:            ownerID,
+				TXTPrefix:             "external-dns-%{record_type}.",
+				ManagedDNSRecordTypes: []string{endpoint.RecordTypeA, endpoint.RecordTypeAAAA, endpoint.RecordTypeCNAME},
+			}, upstreamProviderAdapter{provider: prov})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for cycle := range 2 {
+				current, err := registry.Records(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+				desired, err := singleAdjustedEndpoint(registry, &endpoint.Endpoint{
+					DNSName: name, RecordType: endpoint.RecordTypeA, Targets: endpoint.Targets{"192.0.2.10"},
+					Labels: endpoint.Labels{endpoint.ResourceLabelKey: "service/default/app"},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if desired.DNSName != name {
+					t.Fatalf("AdjustEndpoints rewrote %q to %q", name, desired.DNSName)
+				}
+				calculated := (&plan.Plan{
+					Current: current, Desired: []*endpoint.Endpoint{desired},
+					Policies: []plan.Policy{&plan.SyncPolicy{}}, ManagedRecords: []string{endpoint.RecordTypeA},
+					OwnerID: ownerID,
+				}).Calculate()
+				if cycle == 1 {
+					if countPlanChanges(calculated.Changes) != 0 || len(calculated.Planned) != 1 {
+						t.Fatalf("second cycle did not converge: planned=%d changes=%+v", len(calculated.Planned), calculated.Changes)
+					}
+					break
+				}
+				if len(calculated.Changes.Create) != 1 || countPlanChanges(calculated.Changes) != 1 {
+					t.Fatalf("first cycle planned %+v, want one create", calculated.Changes)
+				}
+				if err := registry.ApplyChanges(context.Background(), calculated.Changes); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			assertFakeRecordTypes(t, fake, map[string]int{endpoint.RecordTypeA: 1, endpoint.RecordTypeTXT: 1})
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			for _, record := range fake.records {
+				if record.Name != "app.example.com" && record.Name != "external-dns-a.app.example.com" {
+					t.Fatalf("stored record name %q, want the lowercase name without a final dot", record.Name)
+				}
+			}
+		})
+	}
+}
+
 func assertFakeRecordTypes(t *testing.T, fake *fakePorkbun, want map[string]int) {
 	t.Helper()
 	fake.mu.Lock()

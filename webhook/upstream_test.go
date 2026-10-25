@@ -82,6 +82,55 @@ func TestExternalDNSClientCompatibility(t *testing.T) {
 	}
 }
 
+// The ExternalDNS client keeps each endpoint's source objects in a map keyed
+// by Endpoint.Key() and re-attaches them by the Key of each adjusted endpoint.
+// If AdjustEndpoints rewrote the name, the object would lose its RecordReady
+// and RecordError events and its DNSEndpoint status, although the record itself
+// would still be written.
+func TestExternalDNSClientKeepsRefObjectsThroughAdjustEndpoints(t *testing.T) {
+	prov, err := providerimpl.New(providerimpl.Config{APIKey: "k", SecretAPIKey: "s", Domain: "example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(New(Config{Provider: prov}).apiServer.Handler)
+	t.Cleanup(httpServer.Close)
+
+	cfg := &externaldns.Config{
+		WebhookProviderURL:          httpServer.URL,
+		WebhookProviderReadTimeout:  2 * time.Second,
+		WebhookProviderWriteTimeout: 2 * time.Second,
+	}
+	client, err := upstreamwebhook.New(context.Background(), cfg, nil)
+	if err != nil {
+		t.Fatalf("negotiate with ExternalDNS client: %v", err)
+	}
+
+	for _, name := range []string{"app.example.com", "App.Example.com", "app.example.com."} {
+		t.Run(name, func(t *testing.T) {
+			desired := (&endpoint.Endpoint{
+				DNSName:    name,
+				RecordType: endpoint.RecordTypeA,
+				Targets:    endpoint.Targets{"192.0.2.1"},
+				RecordTTL:  endpoint.TTL(60),
+			}).WithRefObject(endpoint.NewObjectRef("Service", "v1", "default", "app", "uid", "service"))
+
+			adjusted, err := client.AdjustEndpoints([]*endpoint.Endpoint{desired})
+			if err != nil {
+				t.Fatalf("ExternalDNS AdjustEndpoints: %v", err)
+			}
+			if len(adjusted) != 1 {
+				t.Fatalf("adjusted %d endpoints, want 1", len(adjusted))
+			}
+			if refs := adjusted[0].RefObjects(); len(refs) != 1 {
+				t.Fatalf("adjusted endpoint %q kept %d source objects, want 1", adjusted[0].DNSName, len(refs))
+			}
+			if adjusted[0].RecordTTL != endpoint.TTL(600) {
+				t.Fatalf("adjusted TTL = %d, want 600", adjusted[0].RecordTTL)
+			}
+		})
+	}
+}
+
 func TestExternalDNSClientErrorClassification(t *testing.T) {
 	p := &fakeProvider{}
 	s := newHandlerServer(p)
