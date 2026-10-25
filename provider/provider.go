@@ -313,19 +313,6 @@ func (p *Provider) ApplyChanges(ctx context.Context, changes *plan.Changes) erro
 	// retrieve confirms that no protected primary exists.
 	createdOwnership := make([]pendingOwnershipCleanup, 0)
 	for _, ep := range ownershipFirstCreates(changes.Create) {
-		// The TXT registry only generates an ownership create when Records
-		// returned no ownership TXT under that name, but it looks the name up
-		// with the desired endpoint's spelling. AdjustEndpoints keeps the
-		// source's case, so an existing lowercase marker, such as an orphan
-		// whose primary was deleted, is missed for App.example.com. Repeat the
-		// registry's check case-insensitively so that marker is adopted, as it
-		// is for a lowercase name, rather than duplicated.
-		if isRegistryOwnershipTXT(ep) && idx.hasOwnershipTXT(ep.DNSName) {
-			log.WithFields(log.Fields{
-				"action": "skip-existing-ownership", "name": ep.DNSName, "type": ep.RecordType, "dry_run": p.dryRun,
-			}).Info("apply")
-			continue
-		}
 		createdTargets, err := p.createEndpoint(ctx, ep, &idx)
 		if isRegistryOwnershipTXT(ep) {
 			protected := protectedEndpointForOwnership(ep, changes.Create)
@@ -1118,23 +1105,6 @@ func indexRecords(records []porkbun.Record) (index, error) {
 func (i *index) match(name, recType, target string) []string {
 	k := recordKey{canonicalDNSName(name), strings.ToUpper(strings.TrimSpace(recType)), target}
 	return append([]string(nil), i.byKey[k]...)
-}
-
-// hasOwnershipTXT reports whether name holds a TXT record that ExternalDNS's
-// TXT registry would read as an ownership marker: one with external-dns
-// heritage, whatever its owner or label order. An encrypted marker cannot be
-// recognized without the registry's key.
-func (i *index) hasOwnershipTXT(name string) bool {
-	name = canonicalDNSName(name)
-	for k := range i.byKey {
-		if k.name != name || k.recType != endpoint.RecordTypeTXT {
-			continue
-		}
-		if _, err := endpoint.NewLabelsFromString(k.target, nil); err == nil {
-			return true
-		}
-	}
-	return false
 }
 
 func (i *index) remove(id string) {

@@ -1026,94 +1026,59 @@ func TestExternalDNSV023TXTRegistryConvergesSourceNameSpelling(t *testing.T) {
 	}
 }
 
-// The TXT registry skips an ownership create only when it already read a
-// marker under that exact spelling. For App.Example.com it misses the stored
-// lowercase orphan, so the provider must adopt the orphan itself, as the
-// registry does for app.example.com, instead of writing a second marker that a
-// later delete would leave behind.
-func TestExternalDNSV023TXTRegistryAdoptsOrphanOwnershipForSourceNameSpelling(t *testing.T) {
+// The TXT registry looks up existing ownership markers with the desired
+// endpoint's spelling, so for App.Example.com it misses a stored lowercase
+// orphan and requests a marker anyway. When the orphan holds exactly the value
+// the registry generates, which is what this controller version writes, the
+// provider finds that record and writes nothing new. A marker serialized
+// differently is duplicated instead; the changelog documents that residual.
+func TestExternalDNSV023TXTRegistryReusesIdenticalOrphanForSourceNameSpelling(t *testing.T) {
 	const ownerID = "registry-orphan-spelling-test"
-	tests := map[string]string{
-		"same labels in another order": "ingress/default/app",
-		"stale resource label":         "service/default/app",
-	}
-	for name, desiredResource := range tests {
-		t.Run(name, func(t *testing.T) {
-			stored := "heritage=external-dns,external-dns/resource=ingress/default/app,external-dns/owner=" + ownerID
-			fake := newFakePorkbun()
-			fake.seed(porkbun.Record{ID: "orphan", Name: "external-dns-a.app.example.com", Type: endpoint.RecordTypeTXT, Content: stored, TTL: "600"})
-			prov := newTestProvider(t, fake)
-			registry, err := txtregistry.New(&externaldns.Config{
-				TXTOwnerID:            ownerID,
-				TXTPrefix:             "external-dns-%{record_type}.",
-				ManagedDNSRecordTypes: []string{endpoint.RecordTypeA, endpoint.RecordTypeAAAA, endpoint.RecordTypeCNAME},
-			}, upstreamProviderAdapter{provider: prov})
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			current, err := registry.Records(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			desired, err := singleAdjustedEndpoint(registry, &endpoint.Endpoint{
-				DNSName: "App.Example.com", RecordType: endpoint.RecordTypeA, Targets: endpoint.Targets{"192.0.2.10"},
-				Labels: endpoint.Labels{endpoint.ResourceLabelKey: desiredResource},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			created := (&plan.Plan{
-				Current: current, Desired: []*endpoint.Endpoint{desired},
-				Policies: []plan.Policy{&plan.SyncPolicy{}}, ManagedRecords: []string{endpoint.RecordTypeA},
-				OwnerID: ownerID,
-			}).Calculate()
-			if err := registry.ApplyChanges(context.Background(), created.Changes); err != nil {
-				t.Fatal(err)
-			}
-			assertFakeRecordTypes(t, fake, map[string]int{endpoint.RecordTypeA: 1, endpoint.RecordTypeTXT: 1})
-			fake.mu.Lock()
-			for _, record := range fake.records {
-				if record.Type == endpoint.RecordTypeTXT && (record.ID != "orphan" || record.Content != stored) {
-					fake.mu.Unlock()
-					t.Fatalf("ownership TXT = %+v, want the adopted orphan unchanged", record)
-				}
-			}
-			fake.mu.Unlock()
-
-			current, err = registry.Records(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(current) != 1 || current[0].Labels[endpoint.OwnerLabelKey] != ownerID {
-				t.Fatalf("registry did not read the adopted ownership: %+v", current)
-			}
-			if err := registry.ApplyChanges(context.Background(), &plan.Changes{Delete: current}); err != nil {
-				t.Fatal(err)
-			}
-			assertFakeRecordTypes(t, fake, map[string]int{})
-		})
-	}
-}
-
-// Only a marker the registry would read as ownership may stand in for a
-// generated one. Any other TXT under that name must not suppress the create,
-// or the primary would be written without ownership.
-func TestOwnershipCreateIgnoresNonRegistryTXT(t *testing.T) {
+	stored := endpoint.Labels{endpoint.OwnerLabelKey: ownerID, endpoint.ResourceLabelKey: "service/default/app"}.SerializePlain(false)
 	fake := newFakePorkbun()
-	fake.seed(porkbun.Record{ID: "plain", Name: "external-dns-a.app.example.com", Type: endpoint.RecordTypeTXT, Content: "not-an-ownership-marker", TTL: "600"})
+	fake.seed(porkbun.Record{ID: "orphan", Name: "external-dns-a.app.example.com", Type: endpoint.RecordTypeTXT, Content: stored, TTL: "600"})
 	prov := newTestProvider(t, fake)
-
-	ownership := endpoint.NewEndpoint("external-dns-a.App.Example.com", endpoint.RecordTypeTXT, "heritage=external-dns,external-dns/owner=plain-test")
-	ownership.Labels[endpoint.OwnedRecordLabelKey] = "App.Example.com"
-	err := prov.ApplyChanges(context.Background(), &plan.Changes{Create: []*endpoint.Endpoint{
-		endpoint.NewEndpoint("App.Example.com", endpoint.RecordTypeA, "192.0.2.10"),
-		ownership,
-	}})
+	registry, err := txtregistry.New(&externaldns.Config{
+		TXTOwnerID:            ownerID,
+		TXTPrefix:             "external-dns-%{record_type}.",
+		ManagedDNSRecordTypes: []string{endpoint.RecordTypeA, endpoint.RecordTypeAAAA, endpoint.RecordTypeCNAME},
+	}, upstreamProviderAdapter{provider: prov})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertFakeRecordTypes(t, fake, map[string]int{endpoint.RecordTypeA: 1, endpoint.RecordTypeTXT: 2})
+
+	current, err := registry.Records(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := singleAdjustedEndpoint(registry, &endpoint.Endpoint{
+		DNSName: "App.Example.com", RecordType: endpoint.RecordTypeA, Targets: endpoint.Targets{"192.0.2.10"},
+		Labels: endpoint.Labels{endpoint.ResourceLabelKey: "service/default/app"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := (&plan.Plan{
+		Current: current, Desired: []*endpoint.Endpoint{desired},
+		Policies: []plan.Policy{&plan.SyncPolicy{}}, ManagedRecords: []string{endpoint.RecordTypeA},
+		OwnerID: ownerID,
+	}).Calculate()
+	if err := registry.ApplyChanges(context.Background(), created.Changes); err != nil {
+		t.Fatal(err)
+	}
+	assertFakeRecordTypes(t, fake, map[string]int{endpoint.RecordTypeA: 1, endpoint.RecordTypeTXT: 1})
+
+	current, err = registry.Records(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(current) != 1 || current[0].Labels[endpoint.OwnerLabelKey] != ownerID {
+		t.Fatalf("registry did not read the reused ownership: %+v", current)
+	}
+	if err := registry.ApplyChanges(context.Background(), &plan.Changes{Delete: current}); err != nil {
+		t.Fatal(err)
+	}
+	assertFakeRecordTypes(t, fake, map[string]int{})
 }
 
 func assertFakeRecordTypes(t *testing.T, fake *fakePorkbun, want map[string]int) {
