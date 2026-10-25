@@ -36,7 +36,7 @@ annotations:
   artifacthub.io/containsSecurityUpdates: "true"
   artifacthub.io/changes: |
     - kind: security
-      description: Moved the bundled ExternalDNS controller to v0.24.0, pinned by digest, clearing the 22 fixable findings the v0.23.0 image now carries, including 5 HIGH Go standard library and golang.org/x/net findings; its remaining findings come from upstream's Debian 12 base and golang.org/x/crypto/openpgp and have no severity assigned
+      description: Moved the bundled ExternalDNS controller to v0.24.0, pinned by digest, clearing 19 of the 22 fixable findings the v0.23.0 image now carries, including all 5 HIGH Go standard library and golang.org/x/net findings; the 4 that remain (three Debian 12 base advisories and golang.org/x/crypto/openpgp) have no severity assigned
     - kind: security
       description: Rebuilt the webhook on Go 1.27.3 and a patched distroless base, clearing CVE-2026-111943 (HIGH, Go standard library) and DSA-6572-1 (ca-certificates) from the 0.6.1 image
     - kind: changed

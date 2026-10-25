@@ -15,7 +15,7 @@ migration:
 external-dns:
   # The official chart dependency is 1.23.0, whose default is the floating
   # v0.23.0 tag; no official chart ships 0.24.0 yet. Pin the 0.24.0 release by
-  # digest instead: it clears the fixable findings the 0.23.0 image now carries,
+  # digest instead: it clears the HIGH findings the 0.23.0 image now carries,
   # and a published package must not be able to drift onto a different
   # controller runtime. Every argument this chart renders was verified against
   # the 0.24.0 binary.

@@ -4,7 +4,11 @@
 
 ### Security
 
-- Move the bundled ExternalDNS controller to `v0.24.0`, pinned by digest. The `v0.23.0` image is built with Go `1.27.0` and `golang.org/x/net` `v0.59.0`, and now carries 22 fixable findings, 5 of them HIGH. Those 5 set this package's Artifact Hub grade to D. `v0.24.0` is built with Go `1.27.3` and `golang.org/x/net` `v0.61.0` and clears all of them. Its 4 remaining findings come from upstream's Debian 12 base (DLA-4792-1 and DLA-4854-1 for `tzdata`, DLA-4845-1 for `ca-certificates`) and from `golang.org/x/crypto/openpgp` (GO-2026-5932, which has no fix). None has a severity assigned, so the grade becomes unrated rather than A until upstream rebuilds on a newer base.
+- Move the bundled ExternalDNS controller to `v0.24.0`, pinned by digest. The `v0.23.0` image is built with Go `1.27.0` and `golang.org/x/net` `v0.59.0`, and now carries 22 fixable findings, 5 of them HIGH. Those 5 set this package's Artifact Hub grade to D. `v0.24.0` is built with Go `1.27.3` and `golang.org/x/net` `v0.61.0` and clears 19 of the 22, including all 5 HIGH findings.
+- Four findings remain in the `v0.24.0` image, none with a severity assigned:
+  - three in upstream's Debian 12 base, which have Debian fixes upstream has not yet picked up: DLA-4792-1 and DLA-4854-1 (`tzdata`), and DLA-4845-1 (`ca-certificates`);
+  - one with no fix: GO-2026-5932 (`golang.org/x/crypto/openpgp`).
+- Because none of the four is rated, the grade becomes unrated rather than A. It stays unrated even after upstream rebuilds on a patched base, until the `openpgp` finding is resolved or dropped.
 - Rebuild the webhook on Go `1.27.3` and the patched `gcr.io/distroless/static-debian13:nonroot` base. This clears the 2 fixable findings that have failed the daily release scan of the `0.6.1` image on every published architecture since 2026-10-21: CVE-2026-111943 (HIGH, Go standard library) and DSA-6572-1 (`ca-certificates` `20250419`, fixed in `20250419+deb13u1`). Dependabot's base-image PR still pinned the earlier, unpatched distroless digest, so this release pins the current one.
 
 ### ExternalDNS v0.24.0
