@@ -5,6 +5,70 @@ entries:
       artifacthub.io/category: networking
       artifacthub.io/changes: |
         - kind: security
+          description: Moved the bundled ExternalDNS controller to v0.24.0, pinned by digest, clearing 19 of the 22 fixable findings the v0.23.0 image now carries, including all 5 HIGH Go standard library and golang.org/x/net findings; the 4 that remain (three Debian 12 base advisories and golang.org/x/crypto/openpgp) have no severity assigned
+        - kind: security
+          description: Rebuilt the webhook on Go 1.27.3 and a patched distroless base, clearing CVE-2026-111943 (HIGH, Go standard library) and DSA-6572-1 (ca-certificates) from the 0.6.1 image
+        - kind: changed
+          description: Updated to ExternalDNS v0.24.0 on the official chart 1.23.0, and ran every rendered argument through the v0.24.0 binary; the webhook provider protocol is unchanged
+        - kind: changed
+          description: ExternalDNS v0.24.0 drops endpoints without targets; with the crd source and policy sync, an emptied DNSEndpoint now deletes its record instead of stopping the controller
+      artifacthub.io/containsSecurityUpdates: "true"
+      artifacthub.io/images: |
+        - name: external-dns
+          image: registry.k8s.io/external-dns/external-dns:v0.24.0
+        - name: porkbun-webhook
+          image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:0.7.0
+          platforms:
+            - linux/amd64
+            - linux/arm64
+            - linux/arm/v7
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/links: |
+        - name: source
+          url: https://github.com/mattgmoser/external-dns-porkbun-webhook
+        - name: external-dns
+          url: https://github.com/kubernetes-sigs/external-dns
+        - name: porkbun api
+          url: https://porkbun.com/api/json/v3/documentation
+        - name: support
+          url: https://github.com/mattgmoser/external-dns-porkbun-webhook/issues
+      artifacthub.io/recommendations: |
+        - url: https://artifacthub.io/packages/helm/external-dns/external-dns
+      artifacthub.io/signKey: |
+        fingerprint: 1CD080E5799F3F24960E791966B9EDBB9FE0C877
+        url: https://github.com/mattgmoser/external-dns-porkbun-webhook/raw/main/charts/external-dns-porkbun-webhook/keys/66B9EDBB9FE0C877.asc
+    apiVersion: v2
+    appVersion: 0.7.0
+    created: "2026-10-25T22:53:09.23148199Z"
+    dependencies:
+    - name: external-dns
+      repository: https://kubernetes-sigs.github.io/external-dns/
+      version: 1.23.0
+    description: ExternalDNS with the Porkbun webhook installed as a secure same-Pod
+      sidecar
+    digest: 45a80348dcacc8b0afdf7923966b954ea882c3362aa0f900429ae337b46db09e
+    home: https://github.com/mattgmoser/external-dns-porkbun-webhook
+    icon: https://raw.githubusercontent.com/kubernetes-sigs/external-dns/master/docs/img/external-dns.png
+    keywords:
+    - external-dns
+    - porkbun
+    - dns
+    - webhook
+    kubeVersion: '>=1.24.0-0'
+    maintainers:
+    - name: mattgmoser
+      url: https://github.com/mattgmoser
+    name: external-dns-porkbun-webhook
+    sources:
+    - https://github.com/mattgmoser/external-dns-porkbun-webhook
+    type: application
+    urls:
+    - https://github.com/mattgmoser/external-dns-porkbun-webhook/releases/download/external-dns-porkbun-webhook-0.7.0/external-dns-porkbun-webhook-0.7.0.tgz
+    version: 0.7.0
+  - annotations:
+      artifacthub.io/category: networking
+      artifacthub.io/changes: |
+        - kind: security
           description: Rebuilt the webhook on Go 1.27.2 and golang.org/x/net v0.60.0, clearing all 18 fixable findings the 0.6.0 image now reports, including CVE-2026-78667, CVE-2026-78669 and CVE-2026-97031 (HIGH)
         - kind: security
           description: The bundled ExternalDNS v0.23.0 controller is unchanged and now reports the same upstream Go standard library and golang.org/x/net findings; no rebuilt official release exists yet, so it stays pinned by digest and sets this package's security grade until upstream ships one
@@ -668,4 +732,4 @@ entries:
     urls:
     - https://github.com/mattgmoser/external-dns-porkbun-webhook/releases/download/external-dns-porkbun-webhook-0.1.0/external-dns-porkbun-webhook-0.1.0.tgz
     version: 0.1.0
-generated: "2026-10-11T03:09:46.216166273Z"
+generated: "2026-10-25T22:53:09.231548648Z"
