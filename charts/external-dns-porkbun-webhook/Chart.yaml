@@ -36,7 +36,9 @@ annotations:
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/changes: |
     - kind: fixed
-      description: With --events-emit or the crd source, a hostname written with uppercase letters or a final dot now gets its RecordReady and RecordError events and DNSEndpoint status; the webhook rewrote such names, so ExternalDNS could not match them back to their source object. DNS records were always written correctly
+      description: A hostname written with uppercase letters or a final dot now gets its RecordReady and RecordError events with --events-emit, and its DNSEndpoint status with the crd source; the webhook rewrote such names, so ExternalDNS could not match them back to their source object. DNS records were always written correctly
+    - kind: fixed
+      description: An existing ownership TXT record is adopted, not duplicated, when ExternalDNS creates a hostname written with uppercase letters
   artifacthub.io/images: |
     - name: external-dns
       image: registry.k8s.io/external-dns/external-dns:v0.24.0
