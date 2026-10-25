@@ -13,18 +13,19 @@ migration:
   acknowledgeControllerReplacement: false
 
 external-dns:
-  # The official chart dependency is 1.23.0, whose appVersion is ExternalDNS
-  # 0.23.0. Its default is the floating v0.23.0 tag, so pin that release by
-  # digest: a published package must not be able to drift onto a different
+  # The official chart dependency is 1.23.0, whose default is the floating
+  # v0.23.0 tag; no official chart ships 0.24.0 yet. Pin the 0.24.0 release by
+  # digest instead: it clears the HIGH findings the 0.23.0 image now carries,
+  # and a published package must not be able to drift onto a different
   # controller runtime. Every argument this chart renders was verified against
-  # the 0.23.0 binary.
+  # the 0.24.0 binary.
   image:
     repository: registry.k8s.io/external-dns/external-dns
-    tag: "v0.23.0@sha256:1854499e2b08cee47c40a08e356bff20dcb192dbcfde8378fc3f900f12cad5a3"
+    tag: "v0.24.0@sha256:a80a146d2540fa138565e404f0625157271071a06093021f27ae19d8316d10f9"
     pullPolicy: IfNotPresent
 
   # ExternalDNS 0.22.0 changed the default annotation prefix to
-  # external-dns.kubernetes.io/ with no fallback, and 0.23.0 keeps that default. Upgrading a release that
+  # external-dns.kubernetes.io/ with no fallback, and 0.24.0 keeps that default. Upgrading a release that
   # still annotates with the alpha prefix would make those hostnames invisible
   # to the controller, and under policy=sync the planner deletes the records it
   # can no longer see. Keep the established prefix so this chart's upgrade is
@@ -37,7 +38,7 @@ external-dns:
     webhook:
       image:
         repository: ghcr.io/mattgmoser/external-dns-porkbun-webhook
-        tag: "0.6.1"
+        tag: "0.7.0"
         pullPolicy: IfNotPresent
       env:
         - name: PORKBUN_API_KEY

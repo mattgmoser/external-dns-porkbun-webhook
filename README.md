@@ -48,7 +48,7 @@ Add the repository and export the chart's version-pinned values:
 helm repo add edns-porkbun https://mattgmoser.github.io/external-dns-porkbun-webhook
 helm repo update
 helm show values edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.6.1 > external-dns-porkbun-values.yaml
+  --version 0.7.0 > external-dns-porkbun-values.yaml
 ```
 
 Change all of these in `external-dns-porkbun-values.yaml` before installing:
@@ -64,7 +64,7 @@ Never change `txtOwnerId`, `txtPrefix`, or `txt-wildcard-replacement` casually a
 ```sh
 helm upgrade --install external-dns \
   edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.6.1 \
+  --version 0.7.0 \
   --namespace external-dns \
   --values external-dns-porkbun-values.yaml
 ```
@@ -94,7 +94,7 @@ Do not use the generic install command above to migrate an existing standalone-c
 Choose one controller path:
 
 - If ExternalDNS is already managed directly with the official chart, keep that release. Add this project's version-pinned [`docs/external-dns-values.yaml`](docs/external-dns-values.yaml) sidecar settings to it, roll out the same-Pod configuration, and then remove the old standalone webhook release.
-- To adopt this wrapper, stop and remove the separately managed ExternalDNS controller and the old standalone webhook release, then install `0.6.1` with the preserved ownership settings and independent credential Secret. Never overlap two writable controllers for the same names.
+- To adopt this wrapper, stop and remove the separately managed ExternalDNS controller and the old standalone webhook release, then install `0.7.0` with the preserved ownership settings and independent credential Secret. Never overlap two writable controllers for the same names.
 
 As a final guard, the first in-place Helm upgrade from `0.3.0` or earlier is rejected unless `migration.acknowledgeControllerReplacement=true` is explicitly set. That acknowledgement only confirms that you completed the controller handoff; it does not perform the migration. A fresh `0.4.0` or later install, or an acknowledged migration, creates a release-owned topology marker, so later routine upgrades of that release do not need the acknowledgement again.
 
@@ -150,7 +150,7 @@ Re-export the values on upgrade, or bump both tags by hand, and diff your copy
 against the new defaults:
 
 ```sh
-helm show values edns-porkbun/external-dns-porkbun-webhook --version 0.6.1 \
+helm show values edns-porkbun/external-dns-porkbun-webhook --version 0.7.0 \
   | diff -u external-dns-porkbun-values.yaml - || true
 ```
 
@@ -158,6 +158,15 @@ The chart pins the bundled ExternalDNS controller image to an exact digest and
 refuses to render if that pin is removed or replaced with a floating tag,
 because a floating tag lets the controller runtime change without a chart
 release.
+
+### Upgrading to ExternalDNS v0.24.0
+
+Chart `0.7.0` moves the bundled controller from ExternalDNS v0.23.0 to v0.24.0, pinned by digest, still on the official chart `1.23.0`: no official chart ships v0.24.0 yet. With this chart's TXT registry and default sources the upgrade needs no values changes beyond the two image tags above. Every argument the chart renders was run through the v0.24.0 binary, and the webhook provider protocol is unchanged.
+
+- v0.24.0 is built with Go 1.27.3. It clears 19 of the 22 fixable findings the v0.23.0 image now carries, including all 5 HIGH findings. Four findings remain: three Debian 12 base advisories (`tzdata`, `ca-certificates`) that upstream has not yet picked up, and one in `golang.org/x/crypto/openpgp` with no fix. None has a severity assigned, so this package's Artifact Hub grade moves from D to unrated rather than to A.
+- Endpoints without targets are now dropped by the controller instead of being sent to the provider ([kubernetes-sigs/external-dns#6752](https://github.com/kubernetes-sigs/external-dns/pull/6752)). The `ingress` and `service` sources never produce them. If you enable `--source=crd`, a `DNSEndpoint` whose targets are emptied previously stopped the controller with `failed to AdjustEndpoints with code 400` and left the record in place; under `policy: sync` it now deletes the record and its ownership TXT. Check `DNSEndpoint` targets, or set `--default-targets`, before upgrading.
+- `--namespace` accepts several values, `$KUBECONFIG` is honoured, and the `DNSEndpoint` CRD is validated at admission. None affects this chart's defaults. The other breaking changes are in sources this chart does not enable: `gateway-tcproute`, `gateway-httproute`, `skipper-routegroup`, and the Scaleway and CoreDNS providers.
+- The rendered `app.kubernetes.io/version` label still comes from the dependency chart and reads `0.23.0`; the running controller is the pinned v0.24.0 image.
 
 ### Upgrading to ExternalDNS v0.23.0
 
@@ -181,12 +190,12 @@ To move to the new prefix, migrate your annotations first, then set it deliberat
 
 ```sh
 helm upgrade external-dns edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.6.1 \
+  --version 0.7.0 \
   --values external-dns-porkbun-values.yaml \
   --set-string external-dns.annotationPrefix=external-dns.kubernetes.io/
 ```
 
-Do not use `--reuse-values` for this upgrade. It replaces the new chart's defaults with the previous release's values, so the release would report chart `0.6.1` while still running the **old** ExternalDNS and webhook images -- defeating the point of a security release. Pass your values file explicitly, as above.
+Do not use `--reuse-values` for this upgrade. It replaces the new chart's defaults with the previous release's values, so the release would report chart `0.7.0` while still running the **old** ExternalDNS and webhook images -- defeating the point of a security release. Pass your values file explicitly, as above.
 
 Upstream's [version update playbook](https://kubernetes-sigs.github.io/external-dns/latest/docs/version-update-playbook/) recommends a dry run first. Set `DRY_RUN` in your values file rather than with `--set`, because a bare `--set ...value=true` renders a YAML boolean and Kubernetes requires `EnvVar.value` to be a string:
 
@@ -238,7 +247,7 @@ The bundled official ExternalDNS chart can add the webhook endpoint to its `Serv
 
 ## Development
 
-Requires Go 1.27.0 or newer, because `sigs.k8s.io/external-dns` v0.23.0 does. The `go.mod` toolchain line selects the security-patched Go 1.27.2 toolchain, which CI builds and tests with; the Dockerfile builder must name the same version (`scripts/verify-go-version.sh` checks both).
+Requires Go 1.27.3 or newer, because `sigs.k8s.io/external-dns` v0.24.0 does. The `go.mod` go directive selects that release, which CI builds and tests with; the Dockerfile builder must name the same version (`scripts/verify-go-version.sh` checks both).
 
 ```sh
 make build            # build local binary

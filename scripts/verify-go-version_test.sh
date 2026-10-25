@@ -2,7 +2,10 @@
 set -euo pipefail
 
 # Regression cases for scripts/verify-go-version.sh. Each case writes a
-# Dockerfile against a go.mod selecting go1.27.2 and asserts pass or fail.
+# Dockerfile, and optionally its own go.mod, and asserts pass or fail. The
+# cases are self-contained fixtures: the repository's real Dockerfile and
+# go.mod are checked by running verify-go-version.sh itself, so a Go bump never
+# requires editing this file.
 
 script="$(cd "$(dirname "$0")" && pwd)/verify-go-version.sh"
 work="$(mktemp -d)"
@@ -11,9 +14,9 @@ printf 'module example.invalid/test\n\ngo 1.27.0\n\ntoolchain go1.27.2\n' > "$wo
 
 failures=0
 check() {
-  local expected=$1 name=$2 dockerfile=$3 actual=pass
+  local expected=$1 name=$2 dockerfile=$3 gomod=${4:-$work/go.mod} actual=pass
   printf '%s\n' "$dockerfile" > "$work/Dockerfile"
-  if ! "$script" "$work/Dockerfile" "$work/go.mod" >/dev/null 2>&1; then
+  if ! "$script" "$work/Dockerfile" "$gomod" >/dev/null 2>&1; then
     actual=fail
   fi
   if [[ "$actual" != "$expected" ]]; then
@@ -22,7 +25,16 @@ check() {
   fi
 }
 
-check pass repository-dockerfile "$(cat "$(dirname "$script")/../Dockerfile")"
+# go.mod variants: the toolchain line wins; without one the go directive must
+# name an exact release.
+gomod_case() { printf 'module example.invalid/test\n\n%s\n' "$2" > "$work/$1.mod"; echo "$work/$1.mod"; }
+check pass go-directive-only 'FROM golang:1.27.3-alpine AS build' "$(gomod_case go-only 'go 1.27.3')"
+check fail go-directive-only-mismatch 'FROM golang:1.27.2-alpine AS build' "$(gomod_case go-only-mismatch 'go 1.27.3')"
+check fail go-directive-minor-only 'FROM golang:1.27.3-alpine AS build' "$(gomod_case go-minor 'go 1.27')"
+check pass toolchain-wins-over-go $'FROM golang:1.27.3-alpine AS build' "$(gomod_case toolchain-wins $'go 1.27.0\n\ntoolchain go1.27.3')"
+check fail toolchain-wins-mismatch 'FROM golang:1.27.0-alpine AS build' "$(gomod_case toolchain-wins-mismatch $'go 1.27.0\n\ntoolchain go1.27.3')"
+check fail toolchain-default 'FROM golang:1.27.3-alpine AS build' "$(gomod_case toolchain-default $'go 1.27.3\n\ntoolchain default')"
+check fail no-go-version 'FROM golang:1.27.3-alpine AS build' "$(gomod_case none '')"
 check pass platform-flag-and-stage 'FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine AS build'
 check fail digest-pinned-rejected 'FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS build'
 check pass lowercase 'from golang:1.27.2-alpine as build'

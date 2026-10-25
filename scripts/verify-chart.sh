@@ -65,7 +65,7 @@ require_literal '        - name: webhook'
 require_literal '              value: 127.0.0.1:8888'
 require_literal '      targetPort: http-webhook'
 require_literal '  topology: official-external-dns-same-pod-sidecar'
-require_literal 'image: registry.k8s.io/external-dns/external-dns:v0.23.0@sha256:'
+require_literal 'image: registry.k8s.io/external-dns/external-dns:v0.24.0@sha256:'
 require_literal '            - --annotation-prefix=external-dns.alpha.kubernetes.io/'
 
 if grep -Eq '^[[:space:]]+(port|containerPort):[[:space:]]+8888$' "$rendered_wrapper"; then
@@ -183,6 +183,7 @@ controller_image_overrides=(
   'external-dns.image.tag=v0.21.0'
   'external-dns.image.tag=v0.22.0'
   'external-dns.image.tag=v0.23.0'
+  'external-dns.image.tag=v0.24.0'
   'external-dns.image.tag=latest'
   'external-dns.image.repository=example.invalid/external-dns'
 )

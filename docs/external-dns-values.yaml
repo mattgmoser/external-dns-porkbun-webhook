@@ -1,16 +1,17 @@
 # Canonical installation values for the official ExternalDNS chart v1.23.0,
-# running the ExternalDNS v0.23.0 controller image. Copy this file and
+# running the ExternalDNS v0.24.0 controller image. Copy this file and
 # replace every example value before installing. Keep txtOwnerId, txtPrefix,
 # and txt-wildcard-replacement stable for the lifetime of a zone.
 
-# Chart 1.23.0 defaults to the floating v0.23.0 tag. Pin that release by
-# digest so the controller runtime cannot change without a deliberate edit.
+# Chart 1.23.0 defaults to the floating v0.23.0 tag, which now carries fixable
+# findings, and no official chart ships v0.24.0 yet. Pin the v0.24.0 release
+# by digest so the controller runtime cannot change without a deliberate edit.
 image:
   repository: registry.k8s.io/external-dns/external-dns
-  tag: "v0.23.0@sha256:1854499e2b08cee47c40a08e356bff20dcb192dbcfde8378fc3f900f12cad5a3"
+  tag: "v0.24.0@sha256:a80a146d2540fa138565e404f0625157271071a06093021f27ae19d8316d10f9"
   pullPolicy: IfNotPresent
 
-# ExternalDNS v0.22.0 dropped the annotation-prefix fallback, and v0.23.0 keeps
+# ExternalDNS v0.22.0 dropped the annotation-prefix fallback, and v0.24.0 keeps
 # that default. Keep the established prefix so upgrading does not hide
 # already-annotated hostnames from the controller; under policy=sync the
 # planner deletes records it can no longer see. Migrate annotations first, then
@@ -22,7 +23,7 @@ provider:
   webhook:
     image:
       repository: ghcr.io/mattgmoser/external-dns-porkbun-webhook
-      tag: "0.6.1"
+      tag: "0.7.0"
       pullPolicy: IfNotPresent
     env:
       - name: PORKBUN_API_KEY

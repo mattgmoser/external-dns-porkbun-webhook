@@ -2,8 +2,8 @@ apiVersion: v2
 name: external-dns-porkbun-webhook
 description: ExternalDNS with the Porkbun webhook installed as a secure same-Pod sidecar
 type: application
-version: 0.6.1
-appVersion: "0.6.1"
+version: 0.7.0
+appVersion: "0.7.0"
 kubeVersion: ">=1.24.0-0"
 keywords:
   - external-dns
@@ -36,18 +36,18 @@ annotations:
   artifacthub.io/containsSecurityUpdates: "true"
   artifacthub.io/changes: |
     - kind: security
-      description: Rebuilt the webhook on Go 1.27.2 and golang.org/x/net v0.60.0, clearing all 18 fixable findings the 0.6.0 image now reports, including CVE-2026-78667, CVE-2026-78669 and CVE-2026-97031 (HIGH)
+      description: Moved the bundled ExternalDNS controller to v0.24.0, pinned by digest, clearing 19 of the 22 fixable findings the v0.23.0 image now carries, including all 5 HIGH Go standard library and golang.org/x/net findings; the 4 that remain (three Debian 12 base advisories and golang.org/x/crypto/openpgp) have no severity assigned
     - kind: security
-      description: The bundled ExternalDNS v0.23.0 controller is unchanged and now reports the same upstream Go standard library and golang.org/x/net findings; no rebuilt official release exists yet, so it stays pinned by digest and sets this package's security grade until upstream ships one
+      description: Rebuilt the webhook on Go 1.27.3 and a patched distroless base, clearing CVE-2026-111943 (HIGH, Go standard library) and DSA-6572-1 (ca-certificates) from the 0.6.1 image
     - kind: changed
-      description: Updated the official ExternalDNS chart dependency to 1.23.0, whose templates are identical to 1.22.0; rendered manifests change only in version labels, which now report the running 0.23.0 controller
+      description: Updated to ExternalDNS v0.24.0 on the official chart 1.23.0, and ran every rendered argument through the v0.24.0 binary; the webhook provider protocol is unchanged
     - kind: changed
-      description: Pinned the distroless runtime base by digest, using the same image 0.6.0 was built from
+      description: ExternalDNS v0.24.0 drops endpoints without targets; with the crd source and policy sync, an emptied DNSEndpoint now deletes its record instead of stopping the controller
   artifacthub.io/images: |
     - name: external-dns
-      image: registry.k8s.io/external-dns/external-dns:v0.23.0
+      image: registry.k8s.io/external-dns/external-dns:v0.24.0
     - name: porkbun-webhook
-      image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:0.6.1
+      image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:0.7.0
       platforms:
         - linux/amd64
         - linux/arm64
