@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.7.0
+
+### Security
+
+- Move the bundled ExternalDNS controller to `v0.24.0`, pinned by digest. The `v0.23.0` image is built with Go `1.27.0` and `golang.org/x/net` `v0.59.0`, and now carries 22 fixable findings, 5 of them HIGH. Those 5 set this package's Artifact Hub grade to D. `v0.24.0` is built with Go `1.27.3` and `golang.org/x/net` `v0.61.0` and clears all of them. Its 4 remaining findings come from upstream's Debian 12 base (DLA-4792-1 and DLA-4854-1 for `tzdata`, DLA-4845-1 for `ca-certificates`) and from `golang.org/x/crypto/openpgp` (GO-2026-5932, which has no fix). None has a severity assigned, so the grade becomes unrated rather than A until upstream rebuilds on a newer base.
+- Rebuild the webhook on Go `1.27.3` and the patched `gcr.io/distroless/static-debian13:nonroot` base. This clears the 2 fixable findings that have failed the daily release scan of the `0.6.1` image on every published architecture since 2026-10-21: CVE-2026-111943 (HIGH, Go standard library) and DSA-6572-1 (`ca-certificates` `20250419`, fixed in `20250419+deb13u1`). Dependabot's base-image PR still pinned the earlier, unpatched distroless digest, so this release pins the current one.
+
+### ExternalDNS v0.24.0
+
+- Update to ExternalDNS `v0.24.0`, still on the official chart `1.23.0`, because no official chart ships it yet. Every argument this chart renders, including a `policy: sync` production configuration, was run through the `v0.24.0` binary before pinning. The webhook provider protocol, the TXT ownership format and the planner's conflict resolution are unchanged.
+- ExternalDNS now drops endpoints without targets instead of sending them to the provider (kubernetes-sigs/external-dns#6752). The `ingress` and `service` sources never produce them. With `--source=crd`, a `DNSEndpoint` whose targets are emptied used to stop the controller with `failed to AdjustEndpoints with code 400`, leaving the record in place. Under `policy: sync` it now deletes the record and its ownership TXT.
+- The rendered `app.kubernetes.io/version` label still follows the dependency chart and reads `0.23.0`; the running controller is the pinned `v0.24.0` image.
+
+### Build and dependencies
+
+- Build against `sigs.k8s.io/external-dns` `v0.24.0`, which requires Go `1.27.3`. `go mod tidy` drops the now-redundant `toolchain` line, so `go.mod`'s `go` directive selects the release. `scripts/verify-go-version.sh` now follows Go's own rule: the `toolchain` line when there is one, otherwise the `go` directive, which must name an exact patch release. It previously demanded a `toolchain` line, which failed Dependabot's ExternalDNS update.
+- Make the `verify-go-version` regression suite self-contained. One case compared the real Dockerfile against a fixture pinned to Go `1.27.2`, so every legitimate Go update failed the suite instead of reaching the version check.
+- Require the release's chart values, example values and Artifact Hub image list to name the same controller. Artifact Hub grades the package on the images that list names.
+
 ## 0.6.1
 
 ### Security

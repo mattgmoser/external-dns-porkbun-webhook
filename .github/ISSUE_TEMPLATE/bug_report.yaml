@@ -50,7 +50,7 @@ body:
     id: external-dns-version
     attributes:
       label: External-DNS version
-      placeholder: "v0.23.0"
+      placeholder: "v0.24.0"
     validations:
       required: true
 

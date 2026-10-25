@@ -100,6 +100,7 @@ jobs:
           fi
           # The bundled controller image must stay pinned to an exact digest so a
           # published release cannot silently drift onto a different runtime.
+          controller_tags=()
           for values_file in docs/external-dns-values.yaml charts/external-dns-porkbun-webhook/values.yaml; do
             controller_tag="$(awk '
               /repository:[[:space:]]*registry\.k8s\.io\/external-dns\/external-dns[[:space:]]*$/ { found = 1; next }
@@ -109,7 +110,16 @@ jobs:
               echo "$values_file must pin the ExternalDNS controller image to an exact digest, found: ${controller_tag:-<none>}" >&2
               exit 1
             fi
+            controller_tags+=("$controller_tag")
           done
+          # Both values files must run the same controller, and Artifact Hub
+          # must scan that controller: it grades the package on the images
+          # listed in Chart.yaml, so a stale entry would misreport the runtime.
+          if [[ "${controller_tags[0]}" != "${controller_tags[1]}" ]]; then
+            echo "the chart and example values pin different controllers: ${controller_tags[0]} vs ${controller_tags[1]}" >&2
+            exit 1
+          fi
+          grep -Fxq "      image: registry.k8s.io/external-dns/external-dns:${controller_tags[0]%@*}" charts/external-dns-porkbun-webhook/Chart.yaml
           test "$expected" = "$chart_version"
           test "$expected" = "$app_version"
           test "$expected" = "$example_image_tag"

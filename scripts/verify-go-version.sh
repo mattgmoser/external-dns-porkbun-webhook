@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# CI builds and tests with the go.mod toolchain line (setup-go reads it), while
-# the published image is built by the Dockerfile's golang stage. Dependabot
-# bumps only the Dockerfile and never the toolchain line, so require every
-# golang image the Dockerfile uses to name the toolchain's release; otherwise
-# CI would test one Go and ship another.
+# CI builds and tests with the Go release go.mod selects (setup-go reads the
+# toolchain line, or the go directive when there is none), while the published
+# image is built by the Dockerfile's golang stage. Dependabot bumps the
+# Dockerfile without the toolchain line, so require every golang image the
+# Dockerfile uses to name go.mod's release; otherwise CI would test one Go and
+# ship another.
 #
 # This is not a Dockerfile parser, so it fails closed: anything it cannot
 # classify with certainty is rejected rather than skipped.
@@ -128,10 +129,18 @@ builder_versions="$(
     }
   ' "$dockerfile"
 )"
+# Go's own rule: the toolchain line wins, and without one the go directive
+# names the release. Either way it must be an exact MAJOR.MINOR.PATCH, because
+# a bare MAJOR.MINOR lets setup-go pick whichever patch release is newest.
 toolchain_version="$(awk '$1 == "toolchain" { sub(/^go/, "", $2); print $2; exit }' "$gomod")"
+toolchain_source="toolchain line"
+if [[ -z "$toolchain_version" ]]; then
+  toolchain_version="$(awk '$1 == "go" { print $2; exit }' "$gomod")"
+  toolchain_source="go directive"
+fi
 
 if [[ ! "$toolchain_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "$gomod must declare an exact toolchain goMAJOR.MINOR.PATCH line, found: ${toolchain_version:-<none>}" >&2
+  echo "$gomod must select an exact Go release (toolchain goMAJOR.MINOR.PATCH, or go MAJOR.MINOR.PATCH without a toolchain line), found $toolchain_source: ${toolchain_version:-<none>}" >&2
   exit 1
 fi
 if [[ -z "$builder_versions" ]]; then
@@ -168,8 +177,8 @@ while IFS= read -r builder_version; do
       ;;
     *)
       if [[ "$builder_version" != "$toolchain_version" ]]; then
-        echo "Go version mismatch: $dockerfile builds with $builder_version but $gomod selects toolchain go$toolchain_version." >&2
-        echo "Run: go mod edit -toolchain=go$builder_version (or align the Dockerfile), then rerun CI." >&2
+        echo "Go version mismatch: $dockerfile builds with $builder_version but $gomod selects go$toolchain_version ($toolchain_source)." >&2
+        echo "Align them: go get go@$builder_version, or go mod edit -toolchain=go$builder_version, or change the Dockerfile; then rerun CI." >&2
         status=1
       fi
       ;;
