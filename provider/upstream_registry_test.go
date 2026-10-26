@@ -961,10 +961,19 @@ func TestExternalDNSV023TXTRegistryUpdatesStoredOwnershipValue(t *testing.T) {
 // converge on the lowercase records Porkbun stores, ownership TXT included,
 // rather than planning the same create on every cycle. Surrounding whitespace
 // is trimmed, because the controller's domain filter would otherwise drop the
-// endpoint from the plan, and policy sync would delete its record.
+// endpoint from the plan, and policy sync would delete its record. A non-ASCII
+// name that validates only because Go lowercases U+0130 to "i" is still
+// canonicalized: ExternalDNS's IDNA mapping keeps it distinct from i.example.com.
 func TestExternalDNSV023TXTRegistryConvergesSourceNameSpelling(t *testing.T) {
 	const ownerID = "registry-name-spelling-test"
-	for _, name := range []string{"App.Example.com", "app.example.com.", "app.example.com ", "App.Example.com. "} {
+	tests := map[string]string{
+		"App.Example.com":    "App.Example.com",
+		"app.example.com.":   "app.example.com.",
+		"app.example.com ":   "app.example.com",
+		"App.Example.com. ":  "App.Example.com.",
+		"\u0130.example.com": "i.example.com",
+	}
+	for name, want := range tests {
 		t.Run(name, func(t *testing.T) {
 			fake := newFakePorkbun()
 			prov := newTestProvider(t, fake)
@@ -989,7 +998,7 @@ func TestExternalDNSV023TXTRegistryConvergesSourceNameSpelling(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if want := strings.TrimSpace(name); desired.DNSName != want {
+				if desired.DNSName != want {
 					t.Fatalf("AdjustEndpoints turned %q into %q, want %q", name, desired.DNSName, want)
 				}
 				// The controller narrows the plan with its own and the webhook's
@@ -1017,9 +1026,10 @@ func TestExternalDNSV023TXTRegistryConvergesSourceNameSpelling(t *testing.T) {
 			assertFakeRecordTypes(t, fake, map[string]int{endpoint.RecordTypeA: 1, endpoint.RecordTypeTXT: 1})
 			fake.mu.Lock()
 			defer fake.mu.Unlock()
+			stored := canonicalDNSName(want)
 			for _, record := range fake.records {
-				if record.Name != "app.example.com" && record.Name != "external-dns-a.app.example.com" {
-					t.Fatalf("stored record name %q, want the lowercase name without a final dot", record.Name)
+				if record.Name != stored && record.Name != "external-dns-a."+stored {
+					t.Fatalf("stored record name %q, want %q without a final dot", record.Name, stored)
 				}
 			}
 		})
