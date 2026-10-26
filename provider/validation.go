@@ -163,6 +163,15 @@ func validateDNSName(name string, allowWildcard bool) error {
 	return nil
 }
 
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] > unicode.MaxASCII {
+			return false
+		}
+	}
+	return true
+}
+
 func withinZone(name, zone string) bool {
 	name = canonicalDNSName(name)
 	zone = canonicalDNSName(zone)
@@ -176,11 +185,26 @@ func effectiveTTL(ttl endpoint.TTL) int64 {
 	return int64(ttl)
 }
 
+// adjustEndpoint validates and normalizes a desired endpoint while keeping the
+// source's case and final dot in an ASCII DNSName. The ExternalDNS webhook
+// client re-attaches source objects by Endpoint.Key(), so a rewritten name
+// would drop that object's events and status. The planner and domain filters
+// already ignore ASCII case and a final dot, and ApplyChanges canonicalizes
+// names in validateEndpoint. Anything else is still rewritten:
+//   - surrounding whitespace, which the domain filter does not ignore, so the
+//     planner would drop the endpoint and could delete its current record;
+//   - a non-ASCII name that validated only because strings.ToLower maps some
+//     letters, such as U+0130, to ASCII. ExternalDNS's IDNA mapping does not,
+//     so the original spelling would no longer match the stored record.
 func (p *Provider) adjustEndpoint(ep *endpoint.Endpoint, canonicalName string) error {
 	if err := validateDNSName(canonicalName, true); err != nil {
 		return fmt.Errorf("invalid DNS name %q: %w", ep.DNSName, err)
 	}
-	ep.DNSName = canonicalName
+	if name := strings.TrimSpace(ep.DNSName); isASCII(name) {
+		ep.DNSName = name
+	} else {
+		ep.DNSName = canonicalName
+	}
 	ep.RecordType = strings.ToUpper(strings.TrimSpace(ep.RecordType))
 	if ep.RecordType == "ALIAS" {
 		return fmt.Errorf("record type ALIAS must be represented as CNAME with providerSpecific alias=true")
@@ -198,7 +222,7 @@ func (p *Provider) adjustEndpoint(ep *endpoint.Endpoint, canonicalName string) e
 	if err := normalizeProviderSpecific(ep, true); err != nil {
 		return err
 	}
-	if ep.RecordType == endpoint.RecordTypeCNAME && ep.DNSName == p.domain {
+	if ep.RecordType == endpoint.RecordTypeCNAME && canonicalName == p.domain {
 		ep.SetProviderSpecificProperty(providerSpecificAlias, "true")
 	}
 	if len(ep.Targets) == 0 {

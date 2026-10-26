@@ -956,6 +956,141 @@ func TestExternalDNSV023TXTRegistryUpdatesStoredOwnershipValue(t *testing.T) {
 	}
 }
 
+// AdjustEndpoints keeps the source's case and final dot so the ExternalDNS
+// client can re-attach its source objects. The planner and registry must still
+// converge on the lowercase records Porkbun stores, ownership TXT included,
+// rather than planning the same create on every cycle. Surrounding whitespace
+// is trimmed, because the controller's domain filter would otherwise drop the
+// endpoint from the plan, and policy sync would delete its record. A non-ASCII
+// name that validates only because Go lowercases U+0130 to "i" is still
+// canonicalized: ExternalDNS's IDNA mapping keeps it distinct from i.example.com.
+func TestExternalDNSV023TXTRegistryConvergesSourceNameSpelling(t *testing.T) {
+	const ownerID = "registry-name-spelling-test"
+	tests := map[string]string{
+		"App.Example.com":    "App.Example.com",
+		"app.example.com.":   "app.example.com.",
+		"app.example.com ":   "app.example.com",
+		"App.Example.com. ":  "App.Example.com.",
+		"\u0130.example.com": "i.example.com",
+	}
+	for name, want := range tests {
+		t.Run(name, func(t *testing.T) {
+			fake := newFakePorkbun()
+			prov := newTestProvider(t, fake)
+			registry, err := txtregistry.New(&externaldns.Config{
+				TXTOwnerID:            ownerID,
+				TXTPrefix:             "external-dns-%{record_type}.",
+				ManagedDNSRecordTypes: []string{endpoint.RecordTypeA, endpoint.RecordTypeAAAA, endpoint.RecordTypeCNAME},
+			}, upstreamProviderAdapter{provider: prov})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for cycle := range 2 {
+				current, err := registry.Records(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+				desired, err := singleAdjustedEndpoint(registry, &endpoint.Endpoint{
+					DNSName: name, RecordType: endpoint.RecordTypeA, Targets: endpoint.Targets{"192.0.2.10"},
+					Labels: endpoint.Labels{endpoint.ResourceLabelKey: "service/default/app"},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if desired.DNSName != want {
+					t.Fatalf("AdjustEndpoints turned %q into %q, want %q", name, desired.DNSName, want)
+				}
+				// The controller narrows the plan with its own and the webhook's
+				// domain filters.
+				calculated := (&plan.Plan{
+					Current: current, Desired: []*endpoint.Endpoint{desired},
+					Policies: []plan.Policy{&plan.SyncPolicy{}}, ManagedRecords: []string{endpoint.RecordTypeA},
+					DomainFilter: endpoint.MatchAllDomainFilters{endpoint.NewDomainFilter([]string{"example.com"}), prov.GetDomainFilter()},
+					OwnerID:      ownerID,
+				}).Calculate()
+				if cycle == 1 {
+					if countPlanChanges(calculated.Changes) != 0 || len(calculated.Planned) != 1 {
+						t.Fatalf("second cycle did not converge: planned=%d changes=%+v", len(calculated.Planned), calculated.Changes)
+					}
+					break
+				}
+				if len(calculated.Changes.Create) != 1 || countPlanChanges(calculated.Changes) != 1 {
+					t.Fatalf("first cycle planned %+v, want one create", calculated.Changes)
+				}
+				if err := registry.ApplyChanges(context.Background(), calculated.Changes); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			assertFakeRecordTypes(t, fake, map[string]int{endpoint.RecordTypeA: 1, endpoint.RecordTypeTXT: 1})
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			stored := canonicalDNSName(want)
+			for _, record := range fake.records {
+				if record.Name != stored && record.Name != "external-dns-a."+stored {
+					t.Fatalf("stored record name %q, want %q without a final dot", record.Name, stored)
+				}
+			}
+		})
+	}
+}
+
+// The TXT registry looks up existing ownership markers with the desired
+// endpoint's spelling, so for App.Example.com it misses a stored lowercase
+// orphan and requests a marker anyway. When the orphan holds exactly the value
+// the registry generates, which is what this controller version writes, the
+// provider finds that record and writes nothing new. A marker serialized
+// differently is duplicated instead; the changelog documents that residual.
+func TestExternalDNSV023TXTRegistryReusesIdenticalOrphanForSourceNameSpelling(t *testing.T) {
+	const ownerID = "registry-orphan-spelling-test"
+	stored := endpoint.Labels{endpoint.OwnerLabelKey: ownerID, endpoint.ResourceLabelKey: "service/default/app"}.SerializePlain(false)
+	fake := newFakePorkbun()
+	fake.seed(porkbun.Record{ID: "orphan", Name: "external-dns-a.app.example.com", Type: endpoint.RecordTypeTXT, Content: stored, TTL: "600"})
+	prov := newTestProvider(t, fake)
+	registry, err := txtregistry.New(&externaldns.Config{
+		TXTOwnerID:            ownerID,
+		TXTPrefix:             "external-dns-%{record_type}.",
+		ManagedDNSRecordTypes: []string{endpoint.RecordTypeA, endpoint.RecordTypeAAAA, endpoint.RecordTypeCNAME},
+	}, upstreamProviderAdapter{provider: prov})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	current, err := registry.Records(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := singleAdjustedEndpoint(registry, &endpoint.Endpoint{
+		DNSName: "App.Example.com", RecordType: endpoint.RecordTypeA, Targets: endpoint.Targets{"192.0.2.10"},
+		Labels: endpoint.Labels{endpoint.ResourceLabelKey: "service/default/app"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := (&plan.Plan{
+		Current: current, Desired: []*endpoint.Endpoint{desired},
+		Policies: []plan.Policy{&plan.SyncPolicy{}}, ManagedRecords: []string{endpoint.RecordTypeA},
+		OwnerID: ownerID,
+	}).Calculate()
+	if err := registry.ApplyChanges(context.Background(), created.Changes); err != nil {
+		t.Fatal(err)
+	}
+	assertFakeRecordTypes(t, fake, map[string]int{endpoint.RecordTypeA: 1, endpoint.RecordTypeTXT: 1})
+
+	current, err = registry.Records(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(current) != 1 || current[0].Labels[endpoint.OwnerLabelKey] != ownerID {
+		t.Fatalf("registry did not read the reused ownership: %+v", current)
+	}
+	if err := registry.ApplyChanges(context.Background(), &plan.Changes{Delete: current}); err != nil {
+		t.Fatal(err)
+	}
+	assertFakeRecordTypes(t, fake, map[string]int{})
+}
+
 func assertFakeRecordTypes(t *testing.T, fake *fakePorkbun, want map[string]int) {
 	t.Helper()
 	fake.mu.Lock()

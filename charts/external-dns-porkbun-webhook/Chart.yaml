@@ -2,8 +2,8 @@ apiVersion: v2
 name: external-dns-porkbun-webhook
 description: ExternalDNS with the Porkbun webhook installed as a secure same-Pod sidecar
 type: application
-version: 0.7.0
-appVersion: "0.7.0"
+version: 0.7.1
+appVersion: "0.7.1"
 kubeVersion: ">=1.24.0-0"
 keywords:
   - external-dns
@@ -33,21 +33,15 @@ annotations:
       url: https://porkbun.com/api/json/v3/documentation
     - name: support
       url: https://github.com/mattgmoser/external-dns-porkbun-webhook/issues
-  artifacthub.io/containsSecurityUpdates: "true"
+  artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/changes: |
-    - kind: security
-      description: Moved the bundled ExternalDNS controller to v0.24.0, pinned by digest, clearing 19 of the 22 fixable findings the v0.23.0 image now carries, including all 5 HIGH Go standard library and golang.org/x/net findings; the 4 that remain (three Debian 12 base advisories and golang.org/x/crypto/openpgp) have no severity assigned
-    - kind: security
-      description: Rebuilt the webhook on Go 1.27.3 and a patched distroless base, clearing CVE-2026-111943 (HIGH, Go standard library) and DSA-6572-1 (ca-certificates) from the 0.6.1 image
-    - kind: changed
-      description: Updated to ExternalDNS v0.24.0 on the official chart 1.23.0, and ran every rendered argument through the v0.24.0 binary; the webhook provider protocol is unchanged
-    - kind: changed
-      description: ExternalDNS v0.24.0 drops endpoints without targets; with the crd source and policy sync, an emptied DNSEndpoint now deletes its record instead of stopping the controller
+    - kind: fixed
+      description: An ASCII hostname written with uppercase letters or a final dot now gets its RecordReady and RecordError events with --events-emit, and its DNSEndpoint status with the crd source; the webhook rewrote such names, so ExternalDNS could not match them back to their source object. DNS records were always written correctly
   artifacthub.io/images: |
     - name: external-dns
       image: registry.k8s.io/external-dns/external-dns:v0.24.0
     - name: porkbun-webhook
-      image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:0.7.0
+      image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:0.7.1
       platforms:
         - linux/amd64
         - linux/arm64
