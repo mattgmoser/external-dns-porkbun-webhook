@@ -7,8 +7,9 @@ set -euo pipefail
 # READMEs, and CI's link-check exclusion for the not-yet-tagged blob. Historical
 # mentions, such as CHANGELOG entries, are left alone, and any remaining mention
 # of the old version is listed for review. All edits are staged in a scratch
-# copy and written back only if every expected reference was found, so a failed
-# run leaves the tree untouched.
+# copy and written back only if every expected reference was found; a failure
+# while writing back restores the originals, so a failed run leaves the tree
+# untouched.
 
 usage() {
   echo "usage: $0 <new-version>" >&2
@@ -50,8 +51,9 @@ files=(
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 for file in "${files[@]}"; do
-  mkdir -p "$work/$(dirname "$file")"
+  mkdir -p "$work/$(dirname "$file")" "$work/original/$(dirname "$file")"
   cp "$file" "$work/$file"
+  cp "$file" "$work/original/$file"
 done
 
 # replace FILE PREFIX OLD NEW SUFFIX [EXACT_COUNT]: replace PREFIX OLD SUFFIX
@@ -108,9 +110,28 @@ test "$(awk '$1 == "appVersion:" { gsub(/"/, "", $2); print $2; exit }' "$work/$
 test "$(webhook_image_tag "$work/$chart/values.yaml")" = "$new"
 test "$(webhook_image_tag "$work/docs/external-dns-values.yaml")" = "$new"
 
+# Copy each result beside its target, then rename it into place. If any step
+# fails, remove the copies and restore every file already renamed.
+renamed=()
+restore() {
+  local file
+  for file in "${files[@]}"; do
+    rm -f "$file.bump-version.tmp"
+  done
+  for file in ${renamed[@]+"${renamed[@]}"}; do
+    cp "$work/original/$file" "$file"
+  done
+  echo "Writing back failed; restored the original files." >&2
+}
+trap 'restore; exit 1' ERR
 for file in "${files[@]}"; do
-  cp "$work/$file" "$file"
+  cp "$work/$file" "$file.bump-version.tmp"
 done
+for file in "${files[@]}"; do
+  mv -f "$file.bump-version.tmp" "$file"
+  renamed+=("$file")
+done
+trap - ERR
 echo "Moved the release references from $current to $new."
 
 # Anything still naming the old version is either history or a reference this
@@ -128,3 +149,5 @@ if ! grep -Eq "^## ${new_re}([[:space:]]|$)" CHANGELOG.md; then
   echo
   echo "Add a '## $new' section to CHANGELOG.md; the release workflow rejects the tag without one."
 fi
+echo
+echo "Rewrite artifacthub.io/changes and set artifacthub.io/containsSecurityUpdates in $chart/Chart.yaml for $new; they still describe $current."

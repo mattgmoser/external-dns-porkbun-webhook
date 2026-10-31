@@ -157,10 +157,10 @@ jobs:
           retention-days: 90
 
   # Artifact Hub grades the package on the bundled ExternalDNS controller as
-  # well, and no other automation tracks that image or upstream's releases.
-  # This job fails only when a newer upstream release scans better than the
-  # released pin; residual upstream findings with nothing to adopt are
-  # warnings in the run summary.
+  # well, and no other automation tracks that image: Dependabot follows only
+  # the chart dependency. This job fails only when a newer upstream release
+  # scans better than the released pin; residual upstream findings with
+  # nothing to adopt are warnings in the run summary.
   scan-bundled-controller:
     runs-on: ubuntu-latest
     needs: resolve-release
@@ -188,14 +188,12 @@ jobs:
           fi
           mkdir -p "$RUNNER_TEMP/release"
           git show "$RELEASE_COMMIT:charts/external-dns-porkbun-webhook/values.yaml" > "$RUNNER_TEMP/release/values.yaml"
-          git show "$RELEASE_COMMIT:charts/external-dns-porkbun-webhook/Chart.lock" > "$RUNNER_TEMP/release/Chart.lock"
       - name: Scan the bundled controller and compare upstream releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: >-
           scripts/check-bundled-controller.sh
           "$RUNNER_TEMP/release/values.yaml"
-          "$RUNNER_TEMP/release/Chart.lock"
           controller-reports
       - name: Preserve controller reports
         if: always()

@@ -1,29 +1,31 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 # Scan the ExternalDNS controller image a chart release pins, and compare it
 # with the newest upstream release. Artifact Hub grades this package on both
 # runtime images, so the controller's findings reach users too. Nothing else
-# watches it: Dependabot cannot look up the controller image, nor reach the
-# official chart repository.
+# watches the image: Dependabot's Helm job tracks only the chart dependency,
+# because its registry.k8s.io lookups fail.
 #
 # Exit status: 0 when there is nothing to adopt; 1 when a newer upstream
 # release has a better scan and the pin should move; 2 when the check itself
-# failed. Residual findings with no better upstream release are reported as
-# warnings only: until upstream ships a fix there is nothing to adopt.
+# failed, including any unexpected command failure (the ERR trap below).
+# Residual findings with no better upstream release are reported as warnings
+# only: until upstream ships a fix there is nothing to adopt.
+
+trap 'exit 2' ERR
 
 usage() {
-  echo "usage: $0 <values.yaml> <Chart.lock> <report-directory>" >&2
+  echo "usage: $0 <values.yaml> <report-directory>" >&2
 }
 
-if [[ $# -ne 3 ]]; then
+if [[ $# -ne 2 ]]; then
   usage
   exit 2
 fi
 
 values=$1
-lock=$2
-report_dir=$3
+report_dir=$2
 
 for tool in trivy jq gh docker; do
   if ! command -v "$tool" >/dev/null 2>&1; then
@@ -57,26 +59,16 @@ if [[ ! "$pinned_tag" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+)@sha256:[0-9a-f]{64}$ ]]; the
 fi
 pinned_version="${BASH_REMATCH[1]}"
 
-chart_version="$(awk '
-  $1 == "-" && $2 == "name:" { dependency = $3; next }
-  $1 == "name:" { dependency = $2; next }
-  dependency == "external-dns" && $1 == "version:" { print $2; exit }
-' "$lock")"
-if [[ ! "$chart_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  fail "could not read the external-dns dependency version from $lock"
-fi
-
-# Stable releases only. The repository publishes controller releases (vX.Y.Z)
-# and chart releases (external-dns-helm-chart-X.Y.Z) side by side, and a
-# prerelease's image is not necessarily promoted to registry.k8s.io.
+# Stable controller releases only. The repository also publishes chart
+# releases (external-dns-helm-chart-X.Y.Z), and a prerelease's image is not
+# necessarily promoted to registry.k8s.io.
 if ! releases="$(gh api --paginate 'repos/kubernetes-sigs/external-dns/releases?per_page=100' \
   --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')"; then
   fail 'could not list the ExternalDNS releases'
 fi
 latest_version="$(grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' <<< "$releases" | sort -V | tail -n1 || true)"
-latest_chart="$(sed -n 's/^external-dns-helm-chart-\([0-9]*\.[0-9]*\.[0-9]*\)$/\1/p' <<< "$releases" | sort -V | tail -n1)"
-if [[ -z "$latest_version" || -z "$latest_chart" ]]; then
-  fail 'the ExternalDNS release list has no stable controller or chart release'
+if [[ -z "$latest_version" ]]; then
+  fail 'the ExternalDNS release list has no stable controller release'
 fi
 
 # scan LABEL IMAGE_REF: scan every published platform and write
@@ -158,11 +150,15 @@ notes=()
 
 if version_gt "$latest_version" "$pinned_version"; then
   latest_tag_ref="$repository:$latest_version"
-  if ! manifest="$(docker buildx imagetools inspect "$latest_tag_ref" --format '{{json .Manifest}}' 2>&1)"; then
-    if grep -Eqi 'manifest unknown|not found' <<< "$manifest"; then
+  inspect_errors="$report_dir/inspect-latest.err"
+  if ! manifest="$(docker buildx imagetools inspect "$latest_tag_ref" --format '{{json .Manifest}}' 2> "$inspect_errors")"; then
+    # Only a missing tag counts as "not published"; any other lookup error,
+    # such as a credential helper that is "not found", fails the check.
+    if grep -Fq "$latest_tag_ref: not found" "$inspect_errors" \
+      || grep -Fqi 'manifest unknown' "$inspect_errors"; then
       notes+=("ExternalDNS $latest_version is released, but $latest_tag_ref is not published yet.")
     else
-      printf '%s\n' "$manifest" >&2
+      cat "$inspect_errors" >&2
       fail "could not resolve $latest_tag_ref"
     fi
   else
@@ -195,15 +191,10 @@ elif (( pinned_fixable > 0 )); then
   notes+=("The pinned controller has $pinned_fixable finding(s) with a fix, and $pinned_version is the newest ExternalDNS release. Nothing to adopt until upstream ships one.")
 fi
 
-if version_gt "$latest_chart" "$chart_version"; then
-  notes+=("The official ExternalDNS chart $latest_chart is available; this release depends on $chart_version.")
-fi
-
 {
   printf '## Bundled ExternalDNS controller\n\n'
   printf -- '- Pinned: %s\n' "\`$pinned_ref\`"
-  printf -- '- Newest upstream release: %s; newest official chart: %s (this release uses %s)\n\n' \
-    "$latest_version" "$latest_chart" "$chart_version"
+  printf -- '- Newest upstream release: %s\n\n' "$latest_version"
   for note in ${action:+"$action"} ${notes[@]+"${notes[@]}"}; do
     printf -- '- %s\n' "$note"
   done
