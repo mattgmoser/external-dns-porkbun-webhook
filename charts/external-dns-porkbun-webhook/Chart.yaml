@@ -2,8 +2,8 @@ apiVersion: v2
 name: external-dns-porkbun-webhook
 description: ExternalDNS with the Porkbun webhook installed as a secure same-Pod sidecar
 type: application
-version: 0.7.1
-appVersion: "0.7.1"
+version: 0.7.2
+appVersion: "0.7.2"
 kubeVersion: ">=1.24.0-0"
 keywords:
   - external-dns
@@ -41,7 +41,7 @@ annotations:
     - name: external-dns
       image: registry.k8s.io/external-dns/external-dns:v0.24.0
     - name: porkbun-webhook
-      image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:0.7.1
+      image: ghcr.io/mattgmoser/external-dns-porkbun-webhook:0.7.2
       platforms:
         - linux/amd64
         - linux/arm64

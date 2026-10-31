@@ -33,7 +33,7 @@ kubectl -n external-dns create secret generic porkbun-creds \
 helm repo add edns-porkbun https://mattgmoser.github.io/external-dns-porkbun-webhook
 helm repo update
 helm show values edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.7.1 > external-dns-porkbun-values.yaml
+  --version 0.7.2 > external-dns-porkbun-values.yaml
 ```
 
 Edit every example value in `external-dns-porkbun-values.yaml`, especially:
@@ -53,7 +53,7 @@ Then install:
 ```sh
 helm upgrade --install external-dns \
   edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.7.1 \
+  --version 0.7.2 \
   --namespace external-dns \
   --values external-dns-porkbun-values.yaml
 ```
@@ -64,7 +64,7 @@ choosing `sync`, which also deletes records no longer desired by Kubernetes.
 ## Values
 
 All provider and controller settings are nested under `external-dns` and are
-passed to the upstream chart. Use `helm show values ... --version 0.7.1` as
+passed to the upstream chart. Use `helm show values ... --version 0.7.2` as
 shown above for this chart's immutable defaults. The dependency's exact
 [`external-dns` values](https://raw.githubusercontent.com/kubernetes-sigs/external-dns/external-dns-helm-chart-1.23.0/charts/external-dns/values.yaml)
 are also version-pinned.
@@ -100,10 +100,10 @@ Then choose one path:
 
 - Keep an ExternalDNS release already managed through the official chart, add
   this project's
-  [version-pinned sidecar values](https://github.com/mattgmoser/external-dns-porkbun-webhook/blob/v0.7.1/docs/external-dns-values.yaml),
+  [version-pinned sidecar values](https://github.com/mattgmoser/external-dns-porkbun-webhook/blob/v0.7.2/docs/external-dns-values.yaml),
   roll it out, and remove the old standalone webhook release.
 - To adopt this wrapper, stop and remove the separately managed controller and
-  old webhook release, then install `0.7.1` with the preserved ownership values
+  old webhook release, then install `0.7.2` with the preserved ownership values
   and independent Secret.
 
 Never overlap writable controllers for the same names. As a final guard, the
@@ -129,7 +129,9 @@ blocks chart publication and mutable-channel promotion. The latest immutable
 release is rescanned daily so newly disclosed findings are not missed. There is
 no Trivy ignore list. Findings in the official ExternalDNS image remain visible
 and are addressed by updating the pinned chart and image after a tested
-supported release becomes available.
+supported release becomes available. The daily rescan also compares the pinned
+controller with the newest ExternalDNS release and fails when that release
+scans better.
 
 ## Operations
 

@@ -70,7 +70,7 @@ jobs:
           # dependency, is checked on the pull request/main commit.
           args: >-
             --no-progress
-            --exclude '^https://github\.com/mattgmoser/external-dns-porkbun-webhook/blob/v0\.7\.1/'
+            --exclude '^https://github\.com/mattgmoser/external-dns-porkbun-webhook/blob/v0\.7\.2/'
             --exclude '^https://img\.shields\.io/endpoint\?url=https://artifacthub\.io/badge/repository/external-dns-porkbun-webhook$'
             './**/*.md'
             './.github/helm-repository/*.html'

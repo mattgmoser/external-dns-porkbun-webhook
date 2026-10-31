@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.2
+
+### Security
+
+- Rebuild the webhook with `golang.org/x/net` `v0.62.0`. This clears the 2 fixable findings that have failed the daily release scan of the `0.7.1` image on every published architecture since 2026-10-28: CVE-2026-78661 and CVE-2026-97045, neither with a severity assigned. Both are in the module's HTML parser, `golang.org/x/net/html`, which the webhook binary does not link; it uses only the module's HTTP/2 and IDNA packages. The scanner flags the module version, so a rebuild is still needed to clear them.
+- The bundled ExternalDNS controller stays on `v0.24.0`, which is still the newest upstream release. Its image is built with `golang.org/x/net` `v0.61.0`, so it reports the same two findings. It now reports 7 findings on every architecture, none with a severity assigned: those two; GO-2026-5932 (`golang.org/x/crypto/openpgp`), which has no fix; and four advisories in upstream's Debian 12 base that upstream has not picked up: DLA-4792-1, DLA-4854-1 and DLA-4867-1 (`tzdata`) and DLA-4845-1 (`ca-certificates`). This package's Artifact Hub grade therefore stays unrated.
+
+### Build and release tooling
+
+- The daily security workflow now also scans the ExternalDNS controller image that the latest release pins, on every published architecture, and compares it with the newest stable ExternalDNS release. The job fails when that release scans better, judged first by its most severe finding, which sets Artifact Hub's grade, and then by the number of findings with a fix. Its summary gives the digest to pin. Everything else is a warning in the run summary: residual findings with nothing better to adopt, a newer release whose image is not yet on `registry.k8s.io` or lacks a supported architecture, and a newer official chart. Dependabot can track neither the controller image nor the official chart repository, so until now these were checked by hand. Run against chart `0.6.1`'s `v0.23.0` pin, the check fails and names the `v0.24.0` digest that `0.7.0` adopted.
+- Add `scripts/bump-version.sh`, which moves every reference to the current release to a new version in one step: the chart version and `appVersion`, the Artifact Hub image, the webhook image tag in both values files, the version-pinned README commands and links, and CI's link-check exclusion. It changes nothing if an expected reference is missing, and lists any other mention of the old version for review.
+- Move the Trivy scan and report check from `scripts/verify-image-vulnerabilities.sh` into `scripts/scan-image.sh`, which the release gate and the controller check now share. The check now accepts `linux/arm64` images that record the default `v8` variant explicitly, as the ExternalDNS image does. The release gate's rule is unchanged: it rejects any finding with a fix.
+
 ## 0.7.1
 
 ### Fixed
