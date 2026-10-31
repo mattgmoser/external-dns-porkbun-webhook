@@ -48,7 +48,7 @@ Add the repository and export the chart's version-pinned values:
 helm repo add edns-porkbun https://mattgmoser.github.io/external-dns-porkbun-webhook
 helm repo update
 helm show values edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.7.1 > external-dns-porkbun-values.yaml
+  --version 0.7.2 > external-dns-porkbun-values.yaml
 ```
 
 Change all of these in `external-dns-porkbun-values.yaml` before installing:
@@ -64,7 +64,7 @@ Never change `txtOwnerId`, `txtPrefix`, or `txt-wildcard-replacement` casually a
 ```sh
 helm upgrade --install external-dns \
   edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.7.1 \
+  --version 0.7.2 \
   --namespace external-dns \
   --values external-dns-porkbun-values.yaml
 ```
@@ -94,7 +94,7 @@ Do not use the generic install command above to migrate an existing standalone-c
 Choose one controller path:
 
 - If ExternalDNS is already managed directly with the official chart, keep that release. Add this project's version-pinned [`docs/external-dns-values.yaml`](docs/external-dns-values.yaml) sidecar settings to it, roll out the same-Pod configuration, and then remove the old standalone webhook release.
-- To adopt this wrapper, stop and remove the separately managed ExternalDNS controller and the old standalone webhook release, then install `0.7.1` with the preserved ownership settings and independent credential Secret. Never overlap two writable controllers for the same names.
+- To adopt this wrapper, stop and remove the separately managed ExternalDNS controller and the old standalone webhook release, then install `0.7.2` with the preserved ownership settings and independent credential Secret. Never overlap two writable controllers for the same names.
 
 As a final guard, the first in-place Helm upgrade from `0.3.0` or earlier is rejected unless `migration.acknowledgeControllerReplacement=true` is explicitly set. That acknowledgement only confirms that you completed the controller handoff; it does not perform the migration. A fresh `0.4.0` or later install, or an acknowledged migration, creates a release-owned topology marker, so later routine upgrades of that release do not need the acknowledgement again.
 
@@ -150,7 +150,7 @@ Re-export the values on upgrade, or bump both tags by hand, and diff your copy
 against the new defaults:
 
 ```sh
-helm show values edns-porkbun/external-dns-porkbun-webhook --version 0.7.1 \
+helm show values edns-porkbun/external-dns-porkbun-webhook --version 0.7.2 \
   | diff -u external-dns-porkbun-values.yaml - || true
 ```
 
@@ -190,12 +190,12 @@ To move to the new prefix, migrate your annotations first, then set it deliberat
 
 ```sh
 helm upgrade external-dns edns-porkbun/external-dns-porkbun-webhook \
-  --version 0.7.1 \
+  --version 0.7.2 \
   --values external-dns-porkbun-values.yaml \
   --set-string external-dns.annotationPrefix=external-dns.kubernetes.io/
 ```
 
-Do not use `--reuse-values` for this upgrade. It replaces the new chart's defaults with the previous release's values, so the release would report chart `0.7.1` while still running the **old** ExternalDNS and webhook images -- defeating the point of a security release. Pass your values file explicitly, as above.
+Do not use `--reuse-values` for this upgrade. It replaces the new chart's defaults with the previous release's values, so the release would report chart `0.7.2` while still running the **old** ExternalDNS and webhook images -- defeating the point of a security release. Pass your values file explicitly, as above.
 
 Upstream's [version update playbook](https://kubernetes-sigs.github.io/external-dns/latest/docs/version-update-playbook/) recommends a dry run first. Set `DRY_RUN` in your values file rather than with `--set`, because a bare `--set ...value=true` renders a YAML boolean and Kubernetes requires `EnvVar.value` to be a string:
 
@@ -275,7 +275,11 @@ declared by the chart. In its security report, findings under
 `ghcr.io/mattgmoser/external-dns-porkbun-webhook` belong to this project, while
 findings under `registry.k8s.io/external-dns/external-dns` belong to the pinned
 official ExternalDNS dependency. Both remain visible, and the upstream image is
-updated when a tested supported release becomes available.
+updated when a tested supported release becomes available. The daily run also
+scans the controller image the latest release pins, on every architecture, and
+compares it with the newest ExternalDNS release. It fails when that release
+scans better, so the pin can move; upstream findings with nothing better to
+adopt are listed as warnings in the run summary.
 
 To run the webhook locally against a real Porkbun zone:
 

@@ -58,7 +58,7 @@ Maintainers tag a SemVer release (`vX.Y.Z`) on `main`. The `release.yaml` workfl
 2. Builds + pushes a multi-arch image to `ghcr.io/mattgmoser/external-dns-porkbun-webhook`
 3. Releases the signed same-Pod wrapper chart from `charts/external-dns-porkbun-webhook` to GitHub Pages
 
-Bump the chart's `version` and `appVersion`, the webhook image tags in both chart/default values files, the Artifact Hub image annotation, and the changelog together. The workflow rejects a `vX.Y.Z` tag unless every release version agrees.
+Run `scripts/bump-version.sh X.Y.Z` to move the chart's `version` and `appVersion`, the webhook image tags in both chart/default values files, the Artifact Hub image annotation, the version-pinned README commands and links, and CI's link-check exclusion together. Commit your other changes to those files first: it changes nothing if an expected reference is missing, restores the files from git if a write fails, and lists any other mention of the old version for review. Then add the `## X.Y.Z` changelog section. The workflow rejects a `vX.Y.Z` tag unless every release version agrees.
 
 ## Project structure
 
