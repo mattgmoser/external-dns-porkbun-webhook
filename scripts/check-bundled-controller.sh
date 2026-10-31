@@ -45,11 +45,6 @@ fail() {
   exit 2
 }
 
-# version_gt A B: A is a strictly newer version than B.
-version_gt() {
-  [[ "$1" != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1)" == "$1" ]]
-}
-
 pinned_tag="$(awk '
   /repository:[[:space:]]*registry\.k8s\.io\/external-dns\/external-dns[[:space:]]*$/ { found = 1; next }
   found && $1 == "tag:" { gsub(/"/, "", $2); print $2; exit }
@@ -120,11 +115,13 @@ grade() {
 }
 
 describe() {
-  local label=$1 title=$2 file="$report_dir/$1-summary.json"
+  local label=$1 title=$2 file="$report_dir/$1-summary.json" worst image_grade
   {
     printf '### %s\n\n' "$title"
     jq -r '"\(.findings | length) finding(s), \(.fixable) with a fix."' "$file"
-    printf 'Grade from this image alone: %s.\n\n' "$(grade "$(jq '.worst' "$file")")"
+    worst="$(jq '.worst' "$file")"
+    image_grade="$(grade "$worst")"
+    printf 'Grade from this image alone: %s.\n\n' "$image_grade"
     jq -r '
       if (.findings | length) > 0 then
         "| Finding | Package | Installed | Fixed in | Severity |",
@@ -148,7 +145,10 @@ pinned_fixable="$(jq '.fixable' "$report_dir/pinned-summary.json")"
 action=
 notes=()
 
-if version_gt "$latest_version" "$pinned_version"; then
+# Compute in plain assignments rather than inside a condition, where a failing
+# command would not reach the ERR trap.
+newest_version="$(printf '%s\n%s\n' "$pinned_version" "$latest_version" | sort -V | tail -n1)"
+if [[ "$latest_version" != "$pinned_version" && "$newest_version" == "$latest_version" ]]; then
   latest_tag_ref="$repository:$latest_version"
   inspect_errors="$report_dir/inspect-latest.err"
   if ! manifest="$(docker buildx imagetools inspect "$latest_tag_ref" --format '{{json .Manifest}}' 2> "$inspect_errors")"; then
@@ -181,7 +181,9 @@ if version_gt "$latest_version" "$pinned_version"; then
       latest_worst="$(jq '.worst' "$report_dir/latest-summary.json")"
       latest_fixable="$(jq '.fixable' "$report_dir/latest-summary.json")"
       if (( latest_worst < pinned_worst || (latest_worst == pinned_worst && latest_fixable < pinned_fixable) )); then
-        action="ExternalDNS $latest_version scans better than the pinned $pinned_version (grade $(grade "$latest_worst") vs $(grade "$pinned_worst"), $latest_fixable vs $pinned_fixable finding(s) with a fix). Pin \`$latest_version@$latest_digest\` once its rendered arguments and breaking changes are checked."
+        latest_grade="$(grade "$latest_worst")"
+        pinned_grade="$(grade "$pinned_worst")"
+        action="ExternalDNS $latest_version scans better than the pinned $pinned_version (grade $latest_grade vs $pinned_grade, $latest_fixable vs $pinned_fixable finding(s) with a fix). Pin \`$latest_version@$latest_digest\` once its rendered arguments and breaking changes are checked."
       else
         notes+=("ExternalDNS $latest_version is available, but its scan is no better than the pinned $pinned_version.")
       fi

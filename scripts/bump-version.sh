@@ -7,9 +7,9 @@ set -euo pipefail
 # READMEs, and CI's link-check exclusion for the not-yet-tagged blob. Historical
 # mentions, such as CHANGELOG entries, are left alone, and any remaining mention
 # of the old version is listed for review. All edits are staged in a scratch
-# copy and written back only if every expected reference was found; a failure
-# while writing back restores the originals, so a failed run leaves the tree
-# untouched.
+# copy and written back only if every expected reference was found. The files
+# must be unmodified in git, which is the backup: if writing back fails, they
+# are restored from it.
 
 usage() {
   echo "usage: $0 <new-version>" >&2
@@ -48,12 +48,23 @@ files=(
   .github/workflows/ci.yaml
 )
 
+for file in "${files[@]}"; do
+  if [[ ! -f "$file" || -L "$file" ]]; then
+    echo "$file must be a regular file" >&2
+    exit 1
+  fi
+done
+if ! git diff --quiet HEAD -- "${files[@]}"; then
+  echo "commit or discard the changes to these files first, so git can restore them:" >&2
+  git diff --name-only HEAD -- "${files[@]}" >&2
+  exit 1
+fi
+
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 for file in "${files[@]}"; do
-  mkdir -p "$work/$(dirname "$file")" "$work/original/$(dirname "$file")"
+  mkdir -p "$work/$(dirname "$file")"
   cp "$file" "$work/$file"
-  cp "$file" "$work/original/$file"
 done
 
 # replace FILE PREFIX OLD NEW SUFFIX [EXACT_COUNT]: replace PREFIX OLD SUFFIX
@@ -110,26 +121,17 @@ test "$(awk '$1 == "appVersion:" { gsub(/"/, "", $2); print $2; exit }' "$work/$
 test "$(webhook_image_tag "$work/$chart/values.yaml")" = "$new"
 test "$(webhook_image_tag "$work/docs/external-dns-values.yaml")" = "$new"
 
-# Copy each result beside its target, then rename it into place. If any step
-# fails, remove the copies and restore every file already renamed.
-renamed=()
+# If any write fails, put every file back as git has it.
 restore() {
-  local file
-  for file in "${files[@]}"; do
-    rm -f "$file.bump-version.tmp"
-  done
-  for file in ${renamed[@]+"${renamed[@]}"}; do
-    cp "$work/original/$file" "$file"
-  done
-  echo "Writing back failed; restored the original files." >&2
+  if git checkout HEAD -- "${files[@]}"; then
+    echo "Writing back failed; restored the files from git." >&2
+  else
+    echo "Writing back failed, and so did restoring from git. Run: git checkout HEAD -- ${files[*]}" >&2
+  fi
 }
 trap 'restore; exit 1' ERR
 for file in "${files[@]}"; do
-  cp "$work/$file" "$file.bump-version.tmp"
-done
-for file in "${files[@]}"; do
-  mv -f "$file.bump-version.tmp" "$file"
-  renamed+=("$file")
+  cp "$work/$file" "$file"
 done
 trap - ERR
 echo "Moved the release references from $current to $new."
