@@ -61,9 +61,12 @@ if ! releases="$(gh api --paginate 'repos/kubernetes-sigs/external-dns/releases?
   --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')"; then
   fail 'could not list the ExternalDNS releases'
 fi
-latest_version="$(grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' <<< "$releases" | sort -V | tail -n1 || true)"
-if [[ -z "$latest_version" ]]; then
+if ! stable_tags="$(grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' <<< "$releases")"; then
   fail 'the ExternalDNS release list has no stable controller release'
+fi
+latest_version="$(sort -V <<< "$stable_tags" | tail -n1)"
+if [[ ! "$latest_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  fail "could not select the newest ExternalDNS release: ${latest_version:-<none>}"
 fi
 
 # scan LABEL IMAGE_REF: scan every published platform and write

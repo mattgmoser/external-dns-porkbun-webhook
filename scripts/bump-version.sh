@@ -8,8 +8,8 @@ set -euo pipefail
 # mentions, such as CHANGELOG entries, are left alone, and any remaining mention
 # of the old version is listed for review. All edits are staged in a scratch
 # copy and written back only if every expected reference was found. The files
-# must be unmodified in git, which is the backup: if writing back fails, they
-# are restored from it.
+# must match the git index and HEAD, so git is the backup: if writing back
+# fails, they are restored from the index without touching it.
 
 usage() {
   echo "usage: $0 <new-version>" >&2
@@ -27,14 +27,18 @@ if [[ ! "$new" =~ $semver ]]; then
   exit 2
 fi
 
-cd "$(git rev-parse --show-toplevel)"
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
 chart=charts/external-dns-porkbun-webhook
 current="$(awk '$1 == "version:" { print $2; exit }' "$chart/Chart.yaml")"
 if [[ ! "$current" =~ $semver ]]; then
   echo "could not read the current chart version from $chart/Chart.yaml" >&2
   exit 1
 fi
-if [[ "$new" == "$current" || "$(printf '%s\n%s\n' "$current" "$new" | sort -V | tail -n1)" != "$new" ]]; then
+# Compare in a plain assignment: inside a condition a failing sort would be
+# ignored.
+newest="$(printf '%s\n%s\n' "$current" "$new" | sort -V | tail -n1)"
+if [[ "$new" == "$current" || "$newest" != "$new" ]]; then
   echo "the new version $new must be greater than the current $current" >&2
   exit 2
 fi
@@ -54,9 +58,12 @@ for file in "${files[@]}"; do
     exit 1
   fi
 done
-if ! git diff --quiet HEAD -- "${files[@]}"; then
+# Check the index and the working tree separately: a staged edit that the
+# working tree has since reverted would otherwise pass.
+if ! git diff --quiet -- "${files[@]}" || ! git diff --cached --quiet -- "${files[@]}"; then
   echo "commit or discard the changes to these files first, so git can restore them:" >&2
   git diff --name-only HEAD -- "${files[@]}" >&2
+  git diff --name-only -- "${files[@]}" >&2
   exit 1
 fi
 
@@ -116,17 +123,24 @@ webhook_image_tag() {
     found && $1 == "tag:" { gsub(/"/, "", $2); print $2; exit }
   ' "$1"
 }
-test "$(awk '$1 == "version:" { print $2; exit }' "$work/$chart/Chart.yaml")" = "$new"
-test "$(awk '$1 == "appVersion:" { gsub(/"/, "", $2); print $2; exit }' "$work/$chart/Chart.yaml")" = "$new"
-test "$(webhook_image_tag "$work/$chart/values.yaml")" = "$new"
-test "$(webhook_image_tag "$work/docs/external-dns-values.yaml")" = "$new"
+staged_version="$(awk '$1 == "version:" { print $2; exit }' "$work/$chart/Chart.yaml")"
+staged_app_version="$(awk '$1 == "appVersion:" { gsub(/"/, "", $2); print $2; exit }' "$work/$chart/Chart.yaml")"
+staged_chart_tag="$(webhook_image_tag "$work/$chart/values.yaml")"
+staged_example_tag="$(webhook_image_tag "$work/docs/external-dns-values.yaml")"
+for staged in "$staged_version" "$staged_app_version" "$staged_chart_tag" "$staged_example_tag"; do
+  if [[ "$staged" != "$new" ]]; then
+    echo "a staged release reference reads '$staged', not $new" >&2
+    exit 1
+  fi
+done
 
-# If any write fails, put every file back as git has it.
+# If any write fails, put every file back as the index has it, which the
+# precondition above made identical to HEAD.
 restore() {
-  if git checkout HEAD -- "${files[@]}"; then
+  if git checkout -- "${files[@]}"; then
     echo "Writing back failed; restored the files from git." >&2
   else
-    echo "Writing back failed, and so did restoring from git. Run: git checkout HEAD -- ${files[*]}" >&2
+    echo "Writing back failed, and so did restoring from git. Run: git checkout -- ${files[*]}" >&2
   fi
 }
 trap 'restore; exit 1' ERR
@@ -138,10 +152,15 @@ echo "Moved the release references from $current to $new."
 
 # Anything still naming the old version is either history or a reference this
 # script does not know about yet; a person decides which.
+# grep exits 1 when nothing is left and 2 when it could not search.
+leftover_status=0
 leftovers="$(grep -rnIE "(^|[^0-9.])${old_re}([^0-9]|$)" \
   --exclude=CHANGELOG.md --exclude=go.mod --exclude=go.sum --exclude-dir=.git \
-  README.md CONTRIBUTING.md SECURITY.md docs charts .github || true)"
-if [[ -n "$leftovers" ]]; then
+  README.md CONTRIBUTING.md SECURITY.md docs charts .github)" || leftover_status=$?
+if (( leftover_status > 1 )); then
+  echo
+  echo "Could not search for remaining mentions of $current; check them by hand." >&2
+elif [[ -n "$leftovers" ]]; then
   echo
   echo "Review the remaining mentions of $current:"
   printf '%s\n' "$leftovers"
