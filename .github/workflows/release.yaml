@@ -67,7 +67,7 @@ jobs:
       - name: Scan compiled webhook binary
         run: scripts/verify-binary-vulnerabilities.sh "$RUNNER_TEMP/trivy-binary.json"
       - name: Install Helm
-        uses: azure/setup-helm@v5.0.1
+        uses: azure/setup-helm@v5.1.0
         with:
           version: v3.21.3
       - name: Verify supported Helm configurations and packaged chart
@@ -335,7 +335,7 @@ jobs:
           fi
 
       - name: Install Helm
-        uses: azure/setup-helm@v5.0.1
+        uses: azure/setup-helm@v5.1.0
         with:
           version: v3.21.3
 
